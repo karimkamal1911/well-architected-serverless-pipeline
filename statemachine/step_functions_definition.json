@@ -1,0 +1,34 @@
+{
+  "Comment": "Serverless Image Processing Pipeline",
+  "StartAt": "ValidateImage",
+  "States": {
+    "ValidateImage": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:me-south-1:123456789012:function:ValidateImage",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "ResizeImage"
+    },
+    "ResizeImage": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:me-south-1:123456789012:function:ResizeImage",
+      "Next": "AddWatermark"
+    },
+    "AddWatermark": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:me-south-1:123456789012:function:AddWatermark",
+      "Next": "ExtractMetadata"
+    },
+    "ExtractMetadata": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:me-south-1:123456789012:function:ExtractMetadata",
+      "End": true
+    }
+  }
+}
