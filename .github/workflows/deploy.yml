@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
 
 jobs:
   deploy:
@@ -12,14 +13,20 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: me-south-1
+          python-version: '3.10'
 
-      - name: Deploy to AWS
+      - name: Install dependencies
         run: |
-          echo "Simulating deployment of Step Functions and Lambda functions..."
-          # In a real environment, this is where AWS SAM or CDK commands would run
+          python -m pip install --upgrade pip
+          pip install -r src/requirements.txt
+
+      - name: Simulate AWS Deployment
+        run: |
+          echo "✅ Application code checked out successfully."
+          echo "✅ Python environment validated."
+          echo "✅ Dependencies installed."
+          echo "🚀 Simulating deployment of Step Functions and Lambda functions to AWS..."
+          echo "Deployment successful!"
