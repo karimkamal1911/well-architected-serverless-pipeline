@@ -13,7 +13,7 @@ The system securely accepts image uploads, buffers them to handle traffic spikes
 
 ## 🏗️ Architecture Diagram
 
-![Architecture Diagram](docs/architecture-diagram.png)
+![Architecture Diagram](docs/architecture-diagram.svg)
 
 ## ✨ Architectural Highlights
 *   **Event-Driven & Decoupled:** Uses Amazon SQS to decouple S3 ingestion from processing, preventing Lambda throttling during traffic spikes.
@@ -23,9 +23,9 @@ The system securely accepts image uploads, buffers them to handle traffic spikes
 *   **Cost-Optimized:** S3 Lifecycle policies automatically transition older processed images to Glacier Instant Retrieval and Deep Archive.
 
 ## 📂 Repository Structure
+*   `/.github`: Contains the CI/CD deployment workflow (GitHub Actions).
 *   `/docs`: Contains the architecture diagram and detailed design decisions.
 *   `/src`: Contains the Python source code for the core Lambda functions.
-*   `/.github`: Contains the CI/CD deployment workflow.
 
 ## 💡 Design Decisions
 For a deep dive into *why* specific AWS services were chosen (e.g., SQS vs. Kinesis, Step Functions vs. monolithic Lambda), please read the [Design Decisions Document](docs/design-decisions.md).
@@ -34,3 +34,6 @@ For a deep dive into *why* specific AWS services were chosen (e.g., SQS vs. Kine
 *   **Security:** IAM Least Privilege, WAF integration, S3 Block Public Access, and CloudFront OAC.
 *   **Reliability:** SQS buffering, Step Functions exponential backoff retries, and Dead Letter Queues (DLQ).
 *   **Performance:** Pre-signed URLs offload ingestion directly to S3, and CloudFront caches processed images at the edge.
+
+---
+**License:** This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
