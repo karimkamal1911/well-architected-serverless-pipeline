@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless Image Processing Pipeline
+
+Globals:
+  Function:
+    Timeout: 10
+    Runtime: python3.10
+    Architectures:
+      - x86_64
+
+Resources:
+  IngestBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-ingest-${AWS::AccountId}"
+
+  DestinationBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-destination-${AWS::AccountId}"
+
+  ImageProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: image-processing-queue
+      VisibilityTimeout: 360
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ImageProcessingDLQ.Arn
+        maxReceiveCount: 3
+
+  ImageProcessingDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: image-processing-dlq
+
+  ImageMetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ImageMetadata
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: ImageId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ImageId
+          KeyType: HASH
+
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+
+  ImageProcessingStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: ImageProcessingWorkflow
+      Role: !GetAtt StepFunctionsExecutionRole.Arn
+      DefinitionUri: ../statemachine/definition.asl.json
+
+  GenerateUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/generate_url/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref IngestBucket
+
+  PollerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/poller/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref ImageProcessingStateMachine
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ImageProcessingQueue.Arn
+
+  ImageApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
