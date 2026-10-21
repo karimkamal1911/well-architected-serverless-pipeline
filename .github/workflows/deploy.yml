@@ -29,6 +29,7 @@ jobs:
 
       - name: Validate IaC Syntax
         run: |
+          python -m pip install pyyaml
           echo "Validating Infrastructure as Code Syntax..."
           python -c "import yaml; yaml.safe_load(open('infrastructure/template.yaml'))"
           echo "✅ IaC Template is valid."
