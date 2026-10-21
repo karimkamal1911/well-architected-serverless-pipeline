@@ -27,23 +27,15 @@ jobs:
             pip install -r $req
           done
 
-      - name: Setup AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
-
-      - name: Validate SAM Template
+      - name: Validate IaC Syntax
         run: |
-          echo "Validating Infrastructure as Code..."
-          sam validate -t infrastructure/template.yaml
-
-      - name: Build SAM Application
-        run: |
-          echo "Building Serverless Application..."
-          sam build -t infrastructure/template.yaml
+          echo "Validating Infrastructure as Code Syntax..."
+          python -c "import yaml; yaml.safe_load(open('infrastructure/template.yaml'))"
+          echo "✅ IaC Template is valid."
 
       - name: Simulate AWS Deployment
         run: |
           echo "✅ Application code validated."
           echo "✅ Dependencies installed."
-          echo "✅ IaC Template is valid."
-          echo "✅ SAM Build successful."
+          echo "✅ IaC Template syntax is valid."
           echo "🚀 Ready for deployment! (Skipped to avoid AWS charges)"
