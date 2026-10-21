@@ -13,7 +13,7 @@ This repository contains the architectural design, application code, and Infrast
 The system securely accepts image uploads using pre-signed URLs, decouples ingestion from processing using Amazon SQS, and orchestrates a multi-step workflow (validation, resizing, watermarking, and metadata extraction) using AWS Step Functions. Final images are delivered globally with low latency via Amazon CloudFront, while metadata is stored in DynamoDB.
 
 ## 🏗️ Architecture Diagram
-![Architecture Diagram](docs/architecture.png)
+![Architecture Diagram](docs/architecture-diagram.svg)
 
 ## 🔄 Architectural Flow
 1. **Upload & Initiation:** The client requests a pre-signed URL via API Gateway (protected by AWS WAF rate-limiting). A Lambda function generates the URL, allowing the client to upload the image directly to the **S3 Ingest Bucket** (bypassing API Gateway payload limits).
