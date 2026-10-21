@@ -4,10 +4,10 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: # Allows you to run this manually from the Actions tab
+  workflow_dispatch: 
 
 jobs:
-  deploy:
+  validate-and-build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -27,10 +27,23 @@ jobs:
             pip install -r $req
           done
 
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      - name: Validate SAM Template
+        run: |
+          echo "Validating Infrastructure as Code..."
+          sam validate -t infrastructure/template.yaml
+
+      - name: Build SAM Application
+        run: |
+          echo "Building Serverless Application..."
+          sam build -t infrastructure/template.yaml
+
       - name: Simulate AWS Deployment
         run: |
-          echo "✅ Application code checked out successfully."
-          echo "✅ Python environment validated."
-          echo "✅ Dependencies installed across all microservices."
-          echo "🚀 Simulating deployment of Step Functions and Lambda functions to AWS..."
-          echo "Deployment successful!"
+          echo "✅ Application code validated."
+          echo "✅ Dependencies installed."
+          echo "✅ IaC Template is valid."
+          echo "✅ SAM Build successful."
+          echo "🚀 Ready for deployment! (Skipped to avoid AWS charges)"
