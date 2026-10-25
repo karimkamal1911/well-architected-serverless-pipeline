@@ -59,7 +59,8 @@ Resources:
             ExpirationInDays: 30
           - Id: ExpireNoncurrentVersions
             Status: Enabled
-            NoncurrentVersionExpirationInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
           - Id: AbortIncompleteMultipartUploads
             Status: Enabled
             AbortIncompleteMultipartUpload:
