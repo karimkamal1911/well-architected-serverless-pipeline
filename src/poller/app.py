@@ -14,6 +14,9 @@ STATE_MACHINE_ARN = os.environ['STATE_MACHINE_ARN']
 
 def lambda_handler(event, context):
     failures = []
+    state_machine_name = STATE_MACHINE_ARN.split(':')[-1]
+    region = os.environ.get('AWS_REGION')
+    account = STATE_MACHINE_ARN.split(':')[4]
     
     for record in event['Records']:
         try:
@@ -28,13 +31,17 @@ def lambda_handler(event, context):
                 
                 payload_str = json.dumps({"bucket": bucket, "key": key, "versionId": version_id}, sort_keys=True)
                 processing_id = hashlib.sha256(payload_str.encode()).hexdigest()
-                exec_name = f"proc-{processing_id[:60]}"
+                
+                attempt_id = uuid.uuid4().hex[:8]
+                exec_name = f"proc-{processing_id[:60]}-{attempt_id}"
                 
                 payload = {
                     "bucket": bucket,
                     "key": key,
+                    "original_key": key,
                     "versionId": version_id,
-                    "processing_id": processing_id
+                    "processing_id": processing_id,
+                    "attempt_id": attempt_id
                 }
                 
                 now = int(time.time())
@@ -42,7 +49,7 @@ def lambda_handler(event, context):
                 
                 try:
                     lock_table.put_item(
-                        Item={'ProcessingId': processing_id, 'Status': 'PROCESSING', 'LeaseExpiry': lease, 'ExecutionArn': exec_name},
+                        Item={'ProcessingId': processing_id, 'Status': 'PROCESSING', 'LeaseExpiry': lease, 'ExecutionArn': exec_name, 'AttemptId': attempt_id},
                         ConditionExpression='attribute_not_exists(ProcessingId)'
                     )
                 except ClientError as e:
@@ -57,22 +64,48 @@ def lambda_handler(event, context):
                     item_lease = item.get('LeaseExpiry', 0)
                     
                     if status == 'SUCCEEDED':
-                        print(f"Processing {processing_id} already succeeded. Skipping.")
+                        print(f"Processing {processing_id} already SUCCEEDED. Skipping.")
                         continue
                     elif item_lease > now:
                         print(f"Processing {processing_id} is actively leased. Skipping.")
                         continue
                     
+                    current_arn = item.get('ExecutionArn', exec_name)
+                    try:
+                        exec_details = sfn.describe_execution(executionArn=f"arn:aws:states:{region}:{account}:execution:{state_machine_name}:{current_arn}")
+                        exec_status = exec_details['status']
+                        if exec_status == 'RUNNING':
+                            print(f"Execution {current_arn} is RUNNING. Extending lease.")
+                            lock_table.update_item(
+                                Key={'ProcessingId': processing_id},
+                                UpdateExpression="SET LeaseExpiry = :l",
+                                ExpressionAttributeValues={':l': lease}
+                            )
+                            continue
+                        elif exec_status == 'SUCCEEDED':
+                            lock_table.update_item(
+                                Key={'ProcessingId': processing_id},
+                                UpdateExpression="SET #s = :s",
+                                ExpressionAttributeNames={'#s': 'Status'},
+                                ExpressionAttributeValues={':s': 'SUCCEEDED'}
+                            )
+                            continue
+                        elif exec_status in ['FAILED', 'TIMED_OUT', 'ABORTED']:
+                            print(f"Execution {current_arn} failed. Preparing retry.")
+                    except sfn.exceptions.ExecutionDoesNotExist:
+                        print(f"Execution {current_arn} missing. Safe to claim.")
+                    
                     try:
                         lock_table.update_item(
                             Key={'ProcessingId': processing_id},
-                            UpdateExpression="SET #s = :s, LeaseExpiry = :l, ExecutionArn = :e",
+                            UpdateExpression="SET #s = :s, LeaseExpiry = :l, ExecutionArn = :e, AttemptId = :a",
                             ConditionExpression="LeaseExpiry = :old_l",
                             ExpressionAttributeNames={'#s': 'Status'},
                             ExpressionAttributeValues={
                                 ':s': 'PROCESSING',
                                 ':l': lease,
                                 ':e': exec_name,
+                                ':a': attempt_id,
                                 ':old_l': item_lease
                             }
                         )
@@ -90,34 +123,14 @@ def lambda_handler(event, context):
                     )
                     print(f"Started SFN execution {exec_name}")
                 except sfn.exceptions.ExecutionAlreadyExists:
-                    exec_arn = f"arn:aws:states:{os.environ.get('AWS_REGION')}:{os.environ.get('AWS_ACCOUNT_ID')}:execution:{STATE_MACHINE_ARN.split(':')[-1]}:{exec_name}"
-                    details = sfn.describe_execution(executionArn=exec_arn)
-                    
-                    if details['status'] == 'SUCCEEDED':
-                        lock_table.update_item(
-                            Key={'ProcessingId': processing_id},
-                            UpdateExpression="SET #s = :s",
-                            ExpressionAttributeNames={'#s': 'Status'},
-                            ExpressionAttributeValues={':s': 'SUCCEEDED'}
-                        )
-                        print(f"Execution {exec_name} already SUCCEEDED. Marked as SUCCEEDED.")
-                    elif details['status'] == 'FAILED':
-                        retry_name = f"{exec_name}-retry-{uuid.uuid4().hex[:8]}"
-                        sfn.start_execution(
-                            stateMachineArn=STATE_MACHINE_ARN, 
-                            name=retry_name, 
-                            input=json.dumps(payload)
-                        )
-                        print(f"Retried failed execution as {retry_name}")
-                    else:
-                        print(f"Execution {exec_name} is {details['status']}. Skipping.")
+                    print(f"Execution {exec_name} already exists. Checking status.")
                 except Exception as start_err:
                     print(f"Failed to start execution {exec_name}: {start_err}")
                     try:
                         lock_table.delete_item(
                             Key={'ProcessingId': processing_id},
-                            ConditionExpression="ExecutionArn = :e AND LeaseExpiry = :l",
-                            ExpressionAttributeValues={':e': exec_name, ':l': lease}
+                            ConditionExpression="ExecutionArn = :e AND AttemptId = :a",
+                            ExpressionAttributeValues={':e': exec_name, ':a': attempt_id}
                         )
                     except Exception as del_err:
                         print(f"Conditional deletion failed: {del_err}")
