@@ -29,12 +29,7 @@ def lambda_handler(event, context):
         buffer.seek(0)
         
         resized_key = f"resized/{processing_id}/{os.path.basename(key)}"
-        s3.put_object(
-            Bucket=bucket, 
-            Key=resized_key, 
-            Body=buffer, 
-            ContentType=response['ContentType']
-        )
+        s3.put_object(Bucket=bucket, Key=resized_key, Body=buffer, ContentType=response['ContentType'])
         
         return {
             "bucket": bucket,
@@ -42,7 +37,8 @@ def lambda_handler(event, context):
             "original_key": event['original_key'],
             "versionId": version_id,
             "processing_id": processing_id,
-            "attempt_id": event['attempt_id']
+            "attempt_id": event['attempt_id'],
+            "upload_time": event['upload_time']
         }
     except Exception as e:
         print(f"Resize failed: {str(e)}")
