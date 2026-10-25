@@ -18,7 +18,7 @@ The system securely accepts image uploads using pre-signed URLs (protected by AP
 ## 🔄 Architectural Flow
 1. **Upload & Initiation:** The client requests a pre-signed URL via API Gateway (secured with API Keys and throttling). A Lambda function generates the URL, allowing the client to upload the image directly to the **S3 Ingest Bucket** (bypassing API Gateway payload limits).
 2. **Ingest & Buffer:** The S3 upload (filtered to the `uploads/` prefix to prevent infinite processing loops) triggers an event notification that sends a message to an **Amazon SQS** queue. Failed messages are routed to a Dead Letter Queue (DLQ) after 5 failed attempts.
-3. **Orchestration & Idempotency:** A **Poller Lambda** reads the SQS message and uses a DynamoDB conditional write to acquire an atomic lock based on the S3 object eTag, recording the active Step Functions Execution ARN. If a duplicate event arrives, it queries Step Functions for the current execution status. If the execution failed, it atomically updates the DynamoDB lock to a new retry ARN and starts a new execution. Stale locks with missing executions are safely cleaned up.
+3. **Orchestration & Idempotency:** A **Poller Lambda** reads the SQS message and uses a DynamoDB conditional write to acquire an atomic lock based on the S3 object eTag and sequencer (to handle distinct uploads of identical files). It records the active Step Functions Execution ARN. If a duplicate event arrives, it queries Step Functions for the current execution status. If the execution failed, it atomically updates the DynamoDB lock to a new retry ARN and starts a new execution. Stale locks with missing executions are safely cleaned up using conditional deletes.
 4. **Processing Workflow:** Step Functions orchestrates a 5-step microservice pipeline using **AWS Lambda** (equipped with `Pillow` via Lambda Layers):
    * `Validate` → `Resize` → `Watermark` → `Extract Metadata` → `Store`.
    * The `Validate` step uses `ContentLength` checks and deep image inspection (`Image.verify()`) to prevent oversized files, decompression bombs, and invalid formats. 
@@ -63,6 +63,10 @@ This repository uses **GitHub Actions** to ensure code quality. On every push to
 *   **Performance:** Pre-signed URLs offload ingestion directly to S3, and CloudFront caches processed images at the edge.
 *   **Cost Optimization:** Automated S3 Lifecycle transitions to Glacier after 30 days, and serverless pay-per-use pricing.
 *   **Sustainability:** Serverless compute (Lambda) scales to zero when idle, minimizing wasted energy, and CloudFront edge caching reduces the energy required to transmit data over long distances.
+
+## 🧠 Design Decisions
+*   **Dual DynamoDB Records:** The Poller Lambda maintains an **idempotency lock** record keyed by an MD5 hash of the bucket, key, and sequencer. Separately, the `Store` Lambda writes a **metadata completion** record keyed by the original image key (`original_key`). This separation allows the pipeline to track execution state independently of the final output, preventing duplicate processing while maintaining a clean data model for downstream consumers.
+*   **S3 Versioning & Sequencers:** To support processing every distinct upload of a file, the idempotency key uses the S3 `sequencer` field when available, falling back to the `eTag`. This ensures that uploading the same image content to the same key multiple times will trigger the pipeline correctly, rather than being treated as a duplicate by the ETag alone.
 
 ---
 **License:** This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
