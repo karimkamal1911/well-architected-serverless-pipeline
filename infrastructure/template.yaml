@@ -10,16 +10,43 @@ Globals:
       - x86_64
 
 Resources:
+  # 1. S3 Buckets (With Security and Lifecycle Policies)
   IngestBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "${AWS::StackName}-ingest-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
 
   DestinationBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "${AWS::StackName}-destination-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToGlacier
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: GLACIER
 
+  # 2. SQS Queues
   ImageProcessingQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -27,13 +54,14 @@ Resources:
       VisibilityTimeout: 360
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ImageProcessingDLQ.Arn
-        maxReceiveCount: 3
+        maxReceiveCount: 5
 
   ImageProcessingDLQ:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: image-processing-dlq
 
+  # 3. DynamoDB Table
   ImageMetadataTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -46,6 +74,7 @@ Resources:
         - AttributeName: ImageId
           KeyType: HASH
 
+  # 4. IAM Role for Step Functions
   StepFunctionsExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -56,14 +85,35 @@ Resources:
             Principal:
               Service: states.amazonaws.com
             Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdas
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'lambda:InvokeFunction'
+                Resource: 
+                  - !GetAtt ValidateFunction.Arn
+                  - !GetAtt ResizeFunction.Arn
+                  - !GetAtt WatermarkFunction.Arn
+                  - !GetAtt ExtractMetadataFunction.Arn
+                  - !GetAtt StoreFunction.Arn
 
+  # 5. Step Functions State Machine
   ImageProcessingStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
       Name: ImageProcessingWorkflow
       Role: !GetAtt StepFunctionsExecutionRole.Arn
       DefinitionUri: ../statemachine/definition.asl.json
+      DefinitionSubstitutions:
+        ValidateFunctionArn: !GetAtt ValidateFunction.Arn
+        ResizeFunctionArn: !GetAtt ResizeFunction.Arn
+        WatermarkFunctionArn: !GetAtt WatermarkFunction.Arn
+        ExtractMetadataFunctionArn: !GetAtt ExtractMetadataFunction.Arn
+        StoreFunctionArn: !GetAtt StoreFunction.Arn
 
+  # 6. Lambdas with Least-Privilege IAM Roles
   GenerateUrlFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -72,6 +122,16 @@ Resources:
       Environment:
         Variables:
           BUCKET_NAME: !Ref IngestBucket
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref IngestBucket
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ImageApi
+            Path: /upload
+            Method: GET
 
   PollerFunction:
     Type: AWS::Serverless::Function
@@ -81,12 +141,89 @@ Resources:
       Environment:
         Variables:
           STATE_MACHINE_ARN: !Ref ImageProcessingStateMachine
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt ImageProcessingQueue.QueueName
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt ImageProcessingStateMachine.Name
       Events:
         SQSEvent:
           Type: SQS
           Properties:
             Queue: !GetAtt ImageProcessingQueue.Arn
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
 
+  ValidateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/steps/validate/
+      Handler: app.lambda_handler
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref IngestBucket
+
+  ResizeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/steps/resize/
+      Handler: app.lambda_handler
+      Layers:
+        - !Ref ImageProcessingLayer
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref IngestBucket
+
+  WatermarkFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/steps/watermark/
+      Handler: app.lambda_handler
+      Layers:
+        - !Ref ImageProcessingLayer
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref IngestBucket
+
+  ExtractMetadataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/steps/extract_metadata/
+      Handler: app.lambda_handler
+      Layers:
+        - !Ref ImageProcessingLayer
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref IngestBucket
+
+  StoreFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/steps/store/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ImageMetadataTable
+          DEST_BUCKET: !Ref DestinationBucket
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref IngestBucket
+        - S3WritePolicy:
+            BucketName: !Ref DestinationBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ImageMetadataTable
+
+  # 7. Lambda Layer for Pillow
+  ImageProcessingLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: PillowLayer
+      Description: Pillow library for image processing
+      ContentUri: ../layers/image-processing/
+      CompatibleRuntimes:
+        - python3.10
+
+  # 8. API Gateway
   ImageApi:
     Type: AWS::Serverless::Api
     Properties:
