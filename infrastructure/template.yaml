@@ -10,7 +10,6 @@ Globals:
       - x86_64
 
 Resources:
-  # 1. S3 Buckets (With Security and Lifecycle Policies)
   IngestBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -28,6 +27,11 @@ Resources:
         QueueConfigurations:
           - Event: 's3:ObjectCreated:*'
             Queue: !GetAtt ImageProcessingQueue.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
 
   DestinationBucket:
     Type: AWS::S3::Bucket
@@ -66,7 +70,6 @@ Resources:
               StringEquals:
                 AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${ImageDistribution}"
 
-  # 2. SQS Queues
   ImageProcessingQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -94,8 +97,9 @@ Resources:
             Condition:
               ArnLike:
                 aws:SourceArn: !GetAtt IngestBucket.Arn
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
 
-  # 3. DynamoDB Table
   ImageMetadataTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -107,7 +111,6 @@ Resources:
         - AttributeName: ImageId
           KeyType: HASH
 
-  # 4. IAM Role for Step Functions
   StepFunctionsExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -132,7 +135,6 @@ Resources:
                   - !GetAtt ExtractMetadataFunction.Arn
                   - !GetAtt StoreFunction.Arn
 
-  # 5. Step Functions State Machine
   ImageProcessingStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
@@ -146,7 +148,6 @@ Resources:
         ExtractMetadataFunctionArn: !GetAtt ExtractMetadataFunction.Arn
         StoreFunctionArn: !GetAtt StoreFunction.Arn
 
-  # 6. Lambdas with Least-Privilege IAM Roles
   GenerateUrlFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -164,7 +165,7 @@ Resources:
           Properties:
             RestApiId: !Ref ImageApi
             Path: /upload
-            Method: GET
+            Method: post
 
   PollerFunction:
     Type: AWS::Serverless::Function
@@ -246,7 +247,6 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref ImageMetadataTable
 
-  # 7. Lambda Layer for Pillow
   ImageProcessingLayer:
     Type: AWS::Serverless::LayerVersion
     Properties:
@@ -258,13 +258,11 @@ Resources:
     Metadata:
       BuildMethod: python3.12
 
-  # 8. API Gateway
   ImageApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: Prod
 
-  # 9. CloudFront Distribution & OAC
   CloudFrontOAC:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
@@ -296,3 +294,18 @@ Resources:
             - HEAD
           ForwardedValues:
             QueryString: false
+
+  DLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Alarm if there are messages in the Dead Letter Queue"
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ImageProcessingDLQ.QueueName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
