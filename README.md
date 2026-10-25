@@ -28,9 +28,10 @@ The system securely accepts image uploads using pre-signed URLs, decouples inges
 This project follows a **Microservice Architecture** to ensure isolated dependencies and least-privilege IAM roles.
 
 ```text
-├── .github/                # CI/CD pipeline (Validates IaC and builds dependencies)
+├── .github/                # CI/CD pipeline (Validates IaC and runs unit tests)
 ├── docs/                   # Architecture diagram and detailed design decisions
 ├── infrastructure/         # Infrastructure as Code (AWS SAM template)
+├── layers/                 # Lambda Layers (Pillow dependencies)
 ├── src/                    # Application code
 │   ├── generate_url/       # Pre-signed URL generator microservice
 │   ├── poller/             # SQS to Step Functions trigger microservice
@@ -46,17 +47,18 @@ This project follows a **Microservice Architecture** to ensure isolated dependen
 
 ## 🚀 CI/CD Pipeline
 This repository uses **GitHub Actions** to ensure code quality. On every push to the `main` branch, the pipeline automatically:
-1. Installs all Python dependencies across the microservices.
-2. Validates the Infrastructure as Code (IaC) template syntax using a Python YAML parser (configured to handle CloudFormation intrinsic functions like `!Sub` and `!Ref`).
-3. Simulates the deployment phase.
-*(Note: Actual AWS deployment and `sam build` are intentionally bypassed in this demo to avoid requiring AWS credentials and potential charges).*
+1. Installs all Python dependencies across the microservices and layers.
+2. Runs automated unit tests for the Lambda handlers.
+3. Validates the Infrastructure as Code (IaC) template syntax using the AWS SAM CLI (`sam validate --lint`).
+4. Runs `sam build` to verify the Lambda packages and Pillow layers compile successfully.
+*(Note: Actual AWS deployment is intentionally bypassed in this demo to avoid requiring AWS credentials and potential charges).*
 
 ## 🔒 Well-Architected Framework Alignment
-*   **Operational Excellence:** Infrastructure as Code (IaC), X-Ray tracing, and granular CloudWatch alarms.
-*   **Security:** Least Privilege IAM, WAF integration, S3 Block Public Access, SSE-KMS encryption, and CloudFront OAC.
-*   **Reliability:** SQS buffering, Step Functions exponential backoff retries, and Dead Letter Queues (DLQ).
+*   **Operational Excellence:** Infrastructure as Code (IaC), automated CI/CD validation, unit testing, X-Ray tracing, and granular CloudWatch alarms.
+*   **Security:** Least Privilege IAM policies, S3 Block Public Access, AES-256 encryption, and CloudFront OAC.
+*   **Reliability:** SQS buffering with partial batch failure handling, Step Functions exponential backoff retries, and Dead Letter Queues (DLQ).
 *   **Performance:** Pre-signed URLs offload ingestion directly to S3, and CloudFront caches processed images at the edge.
-*   **Cost Optimization:** Automated S3 Lifecycle transitions to Glacier, serverless pay-per-use pricing.
+*   **Cost Optimization:** Automated S3 Lifecycle transitions to Glacier after 30 days, serverless pay-per-use pricing.
 *   **Sustainability:** Serverless compute (Lambda) scales to zero when idle, minimizing wasted energy, and CloudFront edge caching reduces the energy required to transmit data over long distances.
 
 ---
