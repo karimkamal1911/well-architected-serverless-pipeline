@@ -5,7 +5,7 @@ Description: Serverless Image Processing Pipeline
 Globals:
   Function:
     Timeout: 10
-    Runtime: python3.10
+    Runtime: python3.12
     Architectures:
       - x86_64
 
@@ -24,6 +24,10 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Queue: !GetAtt ImageProcessingQueue.Arn
 
   DestinationBucket:
     Type: AWS::S3::Bucket
@@ -46,6 +50,22 @@ Resources:
               - TransitionInDays: 30
                 StorageClass: GLACIER
 
+  DestinationBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DestinationBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${DestinationBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${ImageDistribution}"
+
   # 2. SQS Queues
   ImageProcessingQueue:
     Type: AWS::SQS::Queue
@@ -57,6 +77,23 @@ Resources:
 
   ImageProcessingDLQ:
     Type: AWS::SQS::Queue
+
+  ImageProcessingQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ImageProcessingQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ImageProcessingQueue.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: !GetAtt IngestBucket.Arn
 
   # 3. DynamoDB Table
   ImageMetadataTable:
@@ -202,7 +239,7 @@ Resources:
           TABLE_NAME: !Ref ImageMetadataTable
           DEST_BUCKET: !Ref DestinationBucket
       Policies:
-        - S3CrudPolicy:
+        - S3ReadPolicy:
             BucketName: !Ref IngestBucket
         - S3WritePolicy:
             BucketName: !Ref DestinationBucket
@@ -217,10 +254,45 @@ Resources:
       Description: Pillow library for image processing
       ContentUri: ../layers/image-processing/
       CompatibleRuntimes:
-        - python3.10
+        - python3.12
+    Metadata:
+      BuildMethod: python3.12
 
   # 8. API Gateway
   ImageApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: Prod
+
+  # 9. CloudFront Distribution & OAC
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: DestinationBucketOAC
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  ImageDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+          - Id: DestinationBucketOrigin
+            DomainName: !GetAtt DestinationBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: DestinationBucketOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          ForwardedValues:
+            QueryString: false
