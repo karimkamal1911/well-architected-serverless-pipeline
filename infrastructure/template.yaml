@@ -4,10 +4,11 @@ Description: Serverless Image Processing Pipeline
 
 Globals:
   Function:
-    Timeout: 10
+    Timeout: 30
     Runtime: python3.12
     Architectures:
       - x86_64
+    Tracing: Active
 
 Resources:
   IngestBucket:
@@ -70,6 +71,11 @@ Resources:
               StringEquals:
                 AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${ImageDistribution}"
 
+  FailureSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: ImagePipelineFailures
+
   ImageProcessingQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -96,7 +102,7 @@ Resources:
             Resource: !GetAtt ImageProcessingQueue.Arn
             Condition:
               ArnLike:
-                aws:SourceArn: !GetAtt IngestBucket.Arn
+                aws:SourceArn: !Sub "arn:aws:s3:::${AWS::StackName}-ingest-${AWS::AccountId}"
               StringEquals:
                 aws:SourceAccount: !Ref AWS::AccountId
 
@@ -122,7 +128,7 @@ Resources:
               Service: states.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: InvokeLambdas
+        - PolicyName: InvokeLambdasAndSNS
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -134,12 +140,20 @@ Resources:
                   - !GetAtt WatermarkFunction.Arn
                   - !GetAtt ExtractMetadataFunction.Arn
                   - !GetAtt StoreFunction.Arn
+              - Effect: Allow
+                Action: 'sns:Publish'
+                Resource: !Ref FailureSNSTopic
+              - Effect: Allow
+                Action: 'xray:PutTraceSegments'
+                Resource: '*'
 
   ImageProcessingStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
       Name: ImageProcessingWorkflow
       Role: !GetAtt StepFunctionsExecutionRole.Arn
+      Tracing:
+        Enabled: true
       DefinitionUri: ../statemachine/definition.asl.json
       DefinitionSubstitutions:
         ValidateFunctionArn: !GetAtt ValidateFunction.Arn
@@ -147,12 +161,15 @@ Resources:
         WatermarkFunctionArn: !GetAtt WatermarkFunction.Arn
         ExtractMetadataFunctionArn: !GetAtt ExtractMetadataFunction.Arn
         StoreFunctionArn: !GetAtt StoreFunction.Arn
+        SNSTopicArn: !Ref FailureSNSTopic
 
   GenerateUrlFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../src/generate_url/
       Handler: app.lambda_handler
+      Timeout: 10
+      MemorySize: 256
       Environment:
         Variables:
           BUCKET_NAME: !Ref IngestBucket
@@ -166,20 +183,28 @@ Resources:
             RestApiId: !Ref ImageApi
             Path: /upload
             Method: post
+            Auth:
+              ApiKeyRequired: true
 
   PollerFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../src/poller/
       Handler: app.lambda_handler
+      MemorySize: 256
       Environment:
         Variables:
           STATE_MACHINE_ARN: !Ref ImageProcessingStateMachine
+          AWS_ACCOUNT_ID: !Ref AWS::AccountId
       Policies:
         - SQSPollerPolicy:
             QueueName: !GetAtt ImageProcessingQueue.QueueName
         - StepFunctionsExecutionPolicy:
             StateMachineName: !GetAtt ImageProcessingStateMachine.Name
+        - Statement:
+            - Effect: Allow
+              Action: 'states:DescribeExecution'
+              Resource: '*'
       Events:
         SQSEvent:
           Type: SQS
@@ -193,6 +218,7 @@ Resources:
     Properties:
       CodeUri: ../src/steps/validate/
       Handler: app.lambda_handler
+      MemorySize: 512
       Layers:
         - !Ref ImageProcessingLayer
       Policies:
@@ -204,6 +230,7 @@ Resources:
     Properties:
       CodeUri: ../src/steps/resize/
       Handler: app.lambda_handler
+      MemorySize: 1024
       Layers:
         - !Ref ImageProcessingLayer
       Policies:
@@ -215,6 +242,7 @@ Resources:
     Properties:
       CodeUri: ../src/steps/watermark/
       Handler: app.lambda_handler
+      MemorySize: 1024
       Layers:
         - !Ref ImageProcessingLayer
       Policies:
@@ -226,6 +254,7 @@ Resources:
     Properties:
       CodeUri: ../src/steps/extract_metadata/
       Handler: app.lambda_handler
+      MemorySize: 512
       Layers:
         - !Ref ImageProcessingLayer
       Policies:
@@ -237,6 +266,7 @@ Resources:
     Properties:
       CodeUri: ../src/steps/store/
       Handler: app.lambda_handler
+      MemorySize: 256
       Environment:
         Variables:
           TABLE_NAME: !Ref ImageMetadataTable
@@ -264,6 +294,32 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: Prod
+      TracingEnabled: true
+
+  ImageApiUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      ApiStages:
+        - ApiId: !Ref ImageApi
+          Stage: Prod
+      Throttle:
+        BurstLimit: 100
+        RateLimit: 50
+
+  ImageApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Enabled: true
+      StageKeys:
+        - RestApiId: !Ref ImageApi
+          StageName: Prod
+
+  ImageApiUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ImageApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref ImageApiUsagePlan
 
   CloudFrontOAC:
     Type: AWS::CloudFront::OriginAccessControl
@@ -306,6 +362,21 @@ Resources:
       Dimensions:
         - Name: QueueName
           Value: !GetAtt ImageProcessingDLQ.QueueName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+
+  StateMachineFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Alarm if Step Functions workflow fails"
+      Namespace: AWS/States
+      MetricName: ExecutionsFailed
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref ImageProcessingStateMachine
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
