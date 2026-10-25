@@ -193,6 +193,8 @@ Resources:
     Properties:
       CodeUri: ../src/steps/validate/
       Handler: app.lambda_handler
+      Layers:
+        - !Ref ImageProcessingLayer
       Policies:
         - S3ReadPolicy:
             BucketName: !Ref IngestBucket
