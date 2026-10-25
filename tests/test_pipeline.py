@@ -91,10 +91,15 @@ class TestPipeline(unittest.TestCase):
     @patch('src.poller.app.lock_table')
     @patch('time.time')
     def test_poller_lease_expired(self, mock_time, mock_table, mock_sfn):
+        # FIX: Provide a real exception class to the mock
+        mock_sfn.exceptions.ExecutionDoesNotExist = ClientError
+        
         mock_time.return_value = 1000
         mock_table.put_item.side_effect = ClientError({'Error': {'Code': 'ConditionalCheckFailedException'}}, 'PutItem')
         mock_table.get_item.return_value = {'Item': {'Status': 'PROCESSING', 'LeaseExpiry': 500, 'ExecutionArn': 'exec1'}}
-        mock_sfn.describe_execution.side_effect = Exception("DoesNotExist")
+        
+        # Simulate the missing execution
+        mock_sfn.describe_execution.side_effect = ClientError({'Error': {'Code': 'ExecutionDoesNotExist'}}, 'DescribeExecution')
         
         event = {
             'Records': [{
@@ -104,6 +109,7 @@ class TestPipeline(unittest.TestCase):
         }
         response = poller_handler(event, {})
         self.assertEqual(len(response['batchItemFailures']), 0)
+        mock_sfn.start_execution.assert_called_once()
 
     @patch('src.poller.app.sfn')
     def test_poller_missing_version(self, mock_sfn):
