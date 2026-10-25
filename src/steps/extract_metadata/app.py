@@ -12,14 +12,11 @@ def lambda_handler(event, context):
     print(f"Extracting metadata for: {key}")
     
     try:
-        # 1. Download the watermarked image
         response = s3.get_object(Bucket=bucket, Key=key)
         image_data = response['Body'].read()
         
-        # 2. Open with Pillow to read properties
         image = Image.open(io.BytesIO(image_data))
         
-        # 3. Extract metadata
         metadata = {
             "width": image.width,
             "height": image.height,
@@ -29,11 +26,10 @@ def lambda_handler(event, context):
         
         print(f"Extracted metadata: {metadata}")
         
-        # 4. Pass data to the final step (Store)
         return {
             "bucket": bucket,
             "key": key,
-            "original_key": event.get('original_key', key),
+            "original_key": event['original_key'],
             "metadata": metadata
         }
     except Exception as e:
