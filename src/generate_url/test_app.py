@@ -4,11 +4,11 @@ import os
 
 os.environ['BUCKET_NAME'] = 'test-bucket'
 
-from app import lambda_handler
+from src.generate_url.app import lambda_handler
 
 class TestGenerateUrl(unittest.TestCase):
     
-    @patch('app.s3_client.generate_presigned_url')
+    @patch('src.generate_url.app.s3_client.generate_presigned_url')
     def test_lambda_handler_success(self, mock_generate_url):
         mock_generate_url.return_value = "https://fake-s3-url.com"
         
