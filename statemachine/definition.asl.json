@@ -1,0 +1,82 @@
+{
+  "Comment": "Serverless Image Processing Workflow",
+  "StartAt": "Validate",
+  "States": {
+    "Validate": {
+      "Type": "Task",
+      "Resource": "${ValidateFunctionArn}",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "Resize"
+    },
+    "Resize": {
+      "Type": "Task",
+      "Resource": "${ResizeFunctionArn}",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "Watermark"
+    },
+    "Watermark": {
+      "Type": "Task",
+      "Resource": "${WatermarkFunctionArn}",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "ExtractMetadata"
+    },
+    "ExtractMetadata": {
+      "Type": "Task",
+      "Resource": "${ExtractMetadataFunctionArn}",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "Store"
+    },
+    "Store": {
+      "Type": "Task",
+      "Resource": "${StoreFunctionArn}",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure"
+        }
+      ],
+      "End": true
+    },
+    "NotifyFailure": {
+      "Type": "Fail",
+      "Error": "ProcessingFailed",
+      "Cause": "The image processing workflow failed. Check CloudWatch logs."
+    }
+  }
+}
