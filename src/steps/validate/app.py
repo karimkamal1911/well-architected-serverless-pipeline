@@ -1,6 +1,7 @@
 import json
 import boto3
 import io
+import datetime
 from PIL import Image
 
 s3 = boto3.client('s3')
@@ -20,9 +21,15 @@ def lambda_handler(event, context):
             
         head_response = s3.head_object(**params)
         content_length = head_response.get('ContentLength', 0)
+        last_modified = head_response.get('LastModified')
+        
+        if not last_modified:
+            raise ValueError("Missing LastModified timestamp from S3")
+            
+        event['upload_time'] = last_modified.astimezone(datetime.timezone.utc).isoformat()
         
         if content_length > MAX_FILE_SIZE:
-            raise ValueError("File too large")
+            raise ValueError(f"File size {content_length} exceeds limit")
         if content_length == 0:
             raise ValueError("File is empty")
 
@@ -32,7 +39,7 @@ def lambda_handler(event, context):
         try:
             image = Image.open(io.BytesIO(image_data))
             if image.format not in ALLOWED_FORMATS:
-                raise ValueError("Format not allowed")
+                raise ValueError(f"Format {image.format} not allowed")
             if image.width * image.height > Image.MAX_IMAGE_PIXELS:
                 raise ValueError("Image dimensions too large")
             image.verify()
