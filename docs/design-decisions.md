@@ -29,3 +29,11 @@ Here is a breakdown of the key technical choices made during the design of this 
 ### 7. Why no Glacier lifecycle on the Destination Bucket?
 *   **Decision:** The destination bucket remains entirely in Standard storage.
 *   **Rationale:** CloudFront serves these images to end-users. If objects were transitioned to Glacier, they would require a restore operation (taking hours) before users could view them. To manage costs safely, we apply lifecycle rules only to the *Ingest* bucket to clean up intermediate files and noncurrent versions after 30 days.
+
+### 8. Metadata Attributes (UploadTime vs Timestamp)
+*   **Decision:** The `Validate` step captures the S3 `LastModified` date and passes it as `upload_time`. The `Store` step writes this to DynamoDB as `UploadTime`. A separate `Timestamp` attribute records when the metadata record is actually written to DynamoDB.
+*   **Rationale:** S3 `LastModified` reflects the exact moment the user uploaded the file to S3. `Timestamp` reflects when processing completed. Keeping both allows analysts to measure total pipeline latency and accurately track the origin time of each asset.
+
+### 9. SNS Notifications
+*   **Decision:** The state machine publishes to SNS on both success (via `PublishSuccessMessage`) and failure (via `PublishFailureMessage`). Both messages use `States.JsonToString($)` to serialize the workflow payload.
+*   **Rationale:** SNS requires a string payload. Passing the raw JSON object directly would result in an integration error. Stringifying the payload ensures the subscriber receives a readable JSON string containing the final destination key, processing ID, and error details.
