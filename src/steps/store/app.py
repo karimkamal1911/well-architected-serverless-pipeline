@@ -18,6 +18,7 @@ def lambda_handler(event, context):
     original_key = event['original_key']
     processing_id = event['processing_id']
     attempt_id = event['attempt_id']
+    upload_time = event['upload_time']
     metadata = event['metadata']
     
     try:
@@ -25,12 +26,19 @@ def lambda_handler(event, context):
         final_key = f"processed/{processing_id}/{base_key}.jpg"
         copy_source = {'Bucket': source_bucket, 'Key': source_key}
         
-        s3.copy_object(CopySource=copy_source, Bucket=DEST_BUCKET, Key=final_key, ContentType='image/jpeg', MetadataDirective='REPLACE')
+        s3.copy_object(
+            CopySource=copy_source,
+            Bucket=DEST_BUCKET,
+            Key=final_key,
+            ContentType='image/jpeg',
+            MetadataDirective='REPLACE'
+        )
         
         table.put_item(
             Item={
                 'ProcessingId': processing_id,
                 'OriginalKey': original_key,
+                'UploadTime': upload_time,
                 'Timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 'Status': 'COMPLETED',
                 'Width': metadata.get('width'),
@@ -48,7 +56,14 @@ def lambda_handler(event, context):
             ExpressionAttributeValues={':s': 'SUCCEEDED', ':a': attempt_id}
         )
         
-        return {"statusCode": 200, "message": "Image stored successfully", "final_key": final_key}
+        return {
+            "statusCode": 200,
+            "message": "Image stored successfully",
+            "final_key": final_key,
+            "processing_id": processing_id,
+            "original_key": original_key,
+            "upload_time": upload_time
+        }
     except Exception as e:
         print(f"Store step failed: {str(e)}")
         raise e
