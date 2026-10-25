@@ -17,6 +17,7 @@ def lambda_handler(event, context):
     source_key = event['key']
     original_key = event['original_key']
     processing_id = event['processing_id']
+    attempt_id = event['attempt_id']
     metadata = event['metadata']
     
     try:
@@ -48,8 +49,9 @@ def lambda_handler(event, context):
         lock_table.update_item(
             Key={'ProcessingId': processing_id},
             UpdateExpression="SET #s = :s",
+            ConditionExpression="AttemptId = :a",
             ExpressionAttributeNames={'#s': 'Status'},
-            ExpressionAttributeValues={':s': 'SUCCEEDED'}
+            ExpressionAttributeValues={':s': 'SUCCEEDED', ':a': attempt_id}
         )
         
         return {
