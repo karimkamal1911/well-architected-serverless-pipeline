@@ -5,7 +5,7 @@ Description: Serverless Image Processing Pipeline
 Parameters:
   AlertEmail:
     Type: String
-    Description: Email address to receive failure alerts
+    Description: Email address to receive processing alerts
   FrontendOrigin:
     Type: String
     Default: "http://localhost:3000"
@@ -105,15 +105,15 @@ Resources:
               StringEquals:
                 AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${ImageDistribution}"
 
-  FailureSNSTopic:
+  NotificationSNSTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: ImagePipelineFailures
+      TopicName: ImagePipelineNotifications
 
-  FailureSNSSubscription:
+  NotificationSNSSubscription:
     Type: AWS::SNS::Subscription
     Properties:
-      TopicArn: !Ref FailureSNSTopic
+      TopicArn: !Ref NotificationSNSTopic
       Protocol: email
       Endpoint: !Ref AlertEmail
 
@@ -194,7 +194,7 @@ Resources:
                   - !GetAtt StoreFunction.Arn
               - Effect: Allow
                 Action: 'sns:Publish'
-                Resource: !Ref FailureSNSTopic
+                Resource: !Ref NotificationSNSTopic
               - Effect: Allow
                 Action: 'xray:PutTraceSegments'
                 Resource: '*'
@@ -216,7 +216,7 @@ Resources:
         WatermarkFunctionArn: !GetAtt WatermarkFunction.Arn
         ExtractMetadataFunctionArn: !GetAtt ExtractMetadataFunction.Arn
         StoreFunctionArn: !GetAtt StoreFunction.Arn
-        SNSTopicArn: !Ref FailureSNSTopic
+        NotificationTopicArn: !Ref NotificationSNSTopic
         LockTableName: !Ref PollerLockTable
 
   GenerateUrlFunction:
@@ -430,7 +430,7 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       AlarmActions:
-        - !Ref FailureSNSTopic
+        - !Ref NotificationSNSTopic
 
   StateMachineFailedAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -447,7 +447,7 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       AlarmActions:
-        - !Ref FailureSNSTopic
+        - !Ref NotificationSNSTopic
 
   PollerErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -464,4 +464,4 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       AlarmActions:
-        - !Ref FailureSNSTopic
+        - !Ref NotificationSNSTopic
