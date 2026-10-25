@@ -16,7 +16,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "NotifyFailure"
+          "Next": "PublishFailureMessage"
         }
       ],
       "Next": "Resize"
@@ -35,7 +35,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "NotifyFailure"
+          "Next": "PublishFailureMessage"
         }
       ],
       "Next": "Watermark"
@@ -46,7 +46,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "NotifyFailure"
+          "Next": "PublishFailureMessage"
         }
       ],
       "Next": "ExtractMetadata"
@@ -57,7 +57,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "NotifyFailure"
+          "Next": "PublishFailureMessage"
         }
       ],
       "Next": "Store"
@@ -68,15 +68,24 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "NotifyFailure"
+          "Next": "PublishFailureMessage"
         }
       ],
       "End": true
     },
-    "NotifyFailure": {
+    "PublishFailureMessage": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${SNSTopicArn}",
+        "Message.$": "$"
+      },
+      "Next": "ProcessingFailed"
+    },
+    "ProcessingFailed": {
       "Type": "Fail",
       "Error": "ProcessingFailed",
-      "Cause": "The image processing workflow failed. Check CloudWatch logs."
+      "Cause": "The image processing workflow failed. Check SNS notification and CloudWatch logs."
     }
   }
 }
