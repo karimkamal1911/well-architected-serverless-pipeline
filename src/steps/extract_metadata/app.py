@@ -28,6 +28,7 @@ def lambda_handler(event, context):
             "versionId": event['versionId'],
             "processing_id": event['processing_id'],
             "attempt_id": event['attempt_id'],
+            "upload_time": event['upload_time'],
             "metadata": metadata
         }
     except Exception as e:
