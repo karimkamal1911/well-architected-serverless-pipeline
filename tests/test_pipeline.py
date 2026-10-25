@@ -58,9 +58,10 @@ class TestPipeline(unittest.TestCase):
             validate_handler(event, {})
 
     @patch('src.steps.validate.app.s3')
+    @patch('src.steps.validate.app.Image.MAX_IMAGE_PIXELS', 50)
     def test_validate_pixel_limit(self, mock_s3):
         mock_s3.head_object.return_value = {'ContentLength': 1024}
-        img = Image.new('RGB', (10000, 10000))
+        img = Image.new('RGB', (10, 10))
         buf = io.BytesIO()
         img.save(buf, format='PNG')
         mock_s3.get_object.return_value = {'Body': MagicMock(read=lambda: buf.getvalue())}
@@ -146,6 +147,23 @@ class TestPipeline(unittest.TestCase):
     def test_poller_failed_execution_retries(self, mock_table, mock_sfn):
         mock_table.put_item.side_effect = ClientError({'Error': {'Code': 'ConditionalCheckFailedException'}}, 'PutItem')
         mock_table.get_item.return_value = {'Item': {'ImageId': 'test', 'ExecutionArn': 'arn:aws:states:us-east-1:123456789012:execution:Test:exec123', 'Status': 'PROCESSING'}}
+        mock_sfn.describe_execution.return_value = {'status': 'FAILED'}
+        event = {
+            'Records': [{
+                'messageId': '123',
+                'body': '{"Records":[{"s3":{"bucket":{"name":"test"},"object":{"key":"test.jpg","eTag":"123"}}}]}'
+            }]
+        }
+        response = poller_handler(event, {})
+        self.assertEqual(len(response['batchItemFailures']), 0)
+        mock_table.update_item.assert_called_once()
+        mock_sfn.start_execution.assert_called_once()
+
+    @patch('src.poller.app.sfn_client')
+    @patch('src.poller.app.table')
+    def test_poller_retry_fails_recovers(self, mock_table, mock_sfn):
+        mock_table.put_item.side_effect = ClientError({'Error': {'Code': 'ConditionalCheckFailedException'}}, 'PutItem')
+        mock_table.get_item.return_value = {'Item': {'ImageId': 'test', 'ExecutionArn': 'arn:aws:states:us-east-1:123456789012:execution:Test:retry-123', 'Status': 'RETRYING'}}
         mock_sfn.describe_execution.return_value = {'status': 'FAILED'}
         event = {
             'Records': [{
