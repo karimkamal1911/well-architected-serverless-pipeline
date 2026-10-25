@@ -1,159 +1,36 @@
-{
-  "Comment": "Serverless Image Processing Workflow",
-  "StartAt": "Validate",
-  "States": {
-    "Validate": {
-      "Type": "Task",
-      "Resource": "${ValidateFunctionArn}",
-      "Retry": [
-        {
-          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "States.Timeout"],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2.0
+import json
+import boto3
+import io
+from PIL import Image
+
+s3 = boto3.client('s3')
+
+def lambda_handler(event, context):
+    bucket = event['bucket']
+    key = event['key']
+    
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        image_data = response['Body'].read()
+        image = Image.open(io.BytesIO(image_data))
+        
+        metadata = {
+            "width": image.width,
+            "height": image.height,
+            "format": image.format,
+            "size_bytes": len(image_data)
         }
-      ],
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "ResultPath": "$.error",
-          "Next": "MarkFailed"
+        
+        return {
+            "bucket": bucket,
+            "key": key,
+            "original_key": event['original_key'],
+            "versionId": event['versionId'],
+            "processing_id": event['processing_id'],
+            "attempt_id": event['attempt_id'],
+            "upload_time": event['upload_time'],
+            "metadata": metadata
         }
-      ],
-      "Next": "Resize"
-    },
-    "Resize": {
-      "Type": "Task",
-      "Resource": "${ResizeFunctionArn}",
-      "Retry": [
-        {
-          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "States.Timeout"],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2.0
-        }
-      ],
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "ResultPath": "$.error",
-          "Next": "MarkFailed"
-        }
-      ],
-      "Next": "Watermark"
-    },
-    "Watermark": {
-      "Type": "Task",
-      "Resource": "${WatermarkFunctionArn}",
-      "Retry": [
-        {
-          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "States.Timeout"],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2.0
-        }
-      ],
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "ResultPath": "$.error",
-          "Next": "MarkFailed"
-        }
-      ],
-      "Next": "ExtractMetadata"
-    },
-    "ExtractMetadata": {
-      "Type": "Task",
-      "Resource": "${ExtractMetadataFunctionArn}",
-      "Retry": [
-        {
-          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "States.Timeout"],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2.0
-        }
-      ],
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "ResultPath": "$.error",
-          "Next": "MarkFailed"
-        }
-      ],
-      "Next": "Store"
-    },
-    "Store": {
-      "Type": "Task",
-      "Resource": "${StoreFunctionArn}",
-      "Retry": [
-        {
-          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "States.Timeout"],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2.0
-        }
-      ],
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "ResultPath": "$.error",
-          "Next": "MarkFailed"
-        }
-      ],
-      "ResultPath": "$.storeResult",
-      "Next": "PublishSuccessMessage"
-    },
-    "PublishSuccessMessage": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::sns:publish",
-      "Parameters": {
-        "TopicArn": "${NotificationTopicArn}",
-        "Message.$": "States.JsonToString($)"
-      },
-      "Next": "Succeed"
-    },
-    "Succeed": {
-      "Type": "Succeed"
-    },
-    "MarkFailed": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::dynamodb:updateItem",
-      "Parameters": {
-        "TableName": "${LockTableName}",
-        "Key": {
-          "ProcessingId": {"S.$": "$.processing_id"}
-        },
-        "UpdateExpression": "SET #s = :s",
-        "ConditionExpression": "AttemptId = :a",
-        "ExpressionAttributeNames": {"#s": "Status"},
-        "ExpressionAttributeValues": {
-          ":s": {"S": "FAILED"},
-          ":a": {"S.$": "$.attempt_id"}
-        }
-      },
-      "ResultPath": null,
-      "Next": "PublishFailureMessage",
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "ResultPath": "$.markFailedError",
-          "Next": "PublishFailureMessage"
-        }
-      ]
-    },
-    "PublishFailureMessage": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::sns:publish",
-      "Parameters": {
-        "TopicArn": "${NotificationTopicArn}",
-        "Message.$": "States.JsonToString($)"
-      },
-      "Next": "ProcessingFailed"
-    },
-    "ProcessingFailed": {
-      "Type": "Fail",
-      "Error": "ProcessingFailed",
-      "Cause": "The image processing workflow failed."
-    }
-  }
-}
+    except Exception as e:
+        print(f"Metadata extraction failed: {str(e)}")
+        raise e
