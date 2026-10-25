@@ -7,6 +7,7 @@ s3 = boto3.client('s3')
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
 ALLOWED_FORMATS = ['JPEG', 'PNG']
+Image.MAX_IMAGE_PIXELS = 50000000
 
 def lambda_handler(event, context):
     bucket = event['bucket']
@@ -33,11 +34,12 @@ def lambda_handler(event, context):
             if image.format not in ALLOWED_FORMATS:
                 raise ValueError(f"Format {image.format} not allowed. Only JPEG and PNG are supported.")
                 
-            max_dimension = 10000
-            if image.width > max_dimension or image.height > max_dimension:
-                raise ValueError(f"Image dimensions {image.width}x{image.height} exceed maximum limit of {max_dimension}px")
+            if image.width * image.height > Image.MAX_IMAGE_PIXELS:
+                raise ValueError(f"Image pixel count ({image.width * image.height}) exceeds limit of {Image.MAX_IMAGE_PIXELS}")
 
             image.verify()
+        except Image.DecompressionBombError:
+            raise ValueError("Decompression bomb detected")
         except Exception as e:
             raise ValueError(f"File {key} is corrupt or not a valid image: {str(e)}")
             
