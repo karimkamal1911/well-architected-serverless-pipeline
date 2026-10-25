@@ -41,7 +41,7 @@ Resources:
           - AllowedHeaders: ["*"]
             AllowedMethods: ["PUT", "GET", "HEAD"]
             AllowedOrigins: [!Ref FrontendOrigin]
-            ExposeHeaders: ["ETag", "x-amz-version-id"]
+            ExposedHeaders: ["ETag", "x-amz-version-id"]
             MaxAge: 3000
       NotificationConfiguration:
         QueueConfigurations:
