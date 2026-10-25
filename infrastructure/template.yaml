@@ -50,7 +50,6 @@ Resources:
   ImageProcessingQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: image-processing-queue
       VisibilityTimeout: 360
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ImageProcessingDLQ.Arn
@@ -58,14 +57,11 @@ Resources:
 
   ImageProcessingDLQ:
     Type: AWS::SQS::Queue
-    Properties:
-      QueueName: image-processing-dlq
 
   # 3. DynamoDB Table
   ImageMetadataTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: ImageMetadata
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: ImageId
