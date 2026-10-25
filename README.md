@@ -5,25 +5,25 @@
 ![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub_Actions-2088FF?style=flat-square&logo=github-actions)
 ![Status](https://img.shields.io/badge/Status-Portfolio_Project-success)
 
-> 🌟 **Note:** This project serves as my capstone portfolio for the **AWS Certified Solutions Architect – Associate (SAA-C03)** certification, demonstrating deep expertise across all six pillars of the AWS Well-Architected Framework.
+> 🌟 **Note:** This project serves as my capstone portfolio for the **AWS Certified Solutions Architect – Associate (SAA-C03)** certification, demonstrating the practical application of AWS Well-Architected principles.
 
 ## 📖 Overview
 This repository contains the architectural design, application code, and Infrastructure as Code (IaC) for a highly scalable, fully serverless image processing pipeline on AWS.
 
-The system securely accepts image uploads using pre-signed URLs, decouples ingestion from processing using Amazon SQS, and orchestrates a multi-step workflow (validation, resizing, watermarking, and metadata extraction) using AWS Step Functions. Final images are delivered globally with low latency via Amazon CloudFront, while metadata is stored in DynamoDB.
+The system securely accepts image uploads using pre-signed URLs (protected by API Keys and Usage Plans), decouples ingestion from processing using Amazon SQS, and orchestrates a multi-step workflow (validation, resizing, watermarking, and metadata extraction) using AWS Step Functions. Final images are delivered globally with low latency via Amazon CloudFront, while metadata is stored in DynamoDB.
 
 ## 🏗️ Architecture Diagram
 ![Architecture Diagram](docs/architecture-diagram.svg)
 
 ## 🔄 Architectural Flow
-1. **Upload & Initiation:** The client requests a pre-signed URL via API Gateway. A Lambda function generates the URL, allowing the client to upload the image directly to the **S3 Ingest Bucket** (bypassing API Gateway payload limits).
+1. **Upload & Initiation:** The client requests a pre-signed URL via API Gateway (secured with API Keys and throttling). A Lambda function generates the URL, allowing the client to upload the image directly to the **S3 Ingest Bucket** (bypassing API Gateway payload limits).
 2. **Ingest & Buffer:** The S3 upload (filtered to the `uploads/` prefix to prevent infinite processing loops) triggers an event notification that sends a message to an **Amazon SQS** queue. Failed messages are routed to a Dead Letter Queue (DLQ) after 5 failed attempts.
-3. **Orchestration:** A **Poller Lambda** reads the SQS message and starts an **AWS Step Functions** execution. It uses a unique hash of the S3 object eTag as the execution name to ensure idempotency and prevent duplicate processing.
+3. **Orchestration:** A **Poller Lambda** reads the SQS message and starts an **AWS Step Functions** execution. It uses a unique hash of the S3 object eTag as the execution name to ensure idempotency and prevent duplicate processing, retrying failed executions automatically.
 4. **Processing Workflow:** Step Functions orchestrates a 5-step microservice pipeline using **AWS Lambda** (equipped with `Pillow` via Lambda Layers):
    * `Validate` → `Resize` → `Watermark` → `Extract Metadata` → `Store`.
-   * The `Validate` step uses deep inspection (`Image.verify()`) to ensure the file is a real image and not just a spoofed Content-Type.
+   * The `Validate` step uses `ContentLength` checks and deep image inspection (`Image.verify()`) to prevent oversized files and decompression bombs. The Watermark step standardizes all outputs to `.jpg`.
 5. **Storage & Delivery:** Processed images are saved to the **S3 Destination Bucket**, while metadata is written to **Amazon DynamoDB**. Users retrieve images globally via **Amazon CloudFront** (secured with Origin Access Control).
-6. **Observability:** The system uses **Amazon CloudWatch** for metrics and DLQ alarms, and **AWS X-Ray** for distributed tracing.
+6. **Observability & Alerting:** The system uses **AWS X-Ray** for distributed tracing across the entire pipeline. **Amazon CloudWatch** monitors for Lambda errors, DLQ depth, and failed Step Functions, while **Amazon SNS** sends immediate email alerts if a workflow fails.
 
 ## 📂 Repository Structure
 This project follows a **Microservice Architecture** to ensure isolated dependencies and least-privilege IAM roles.
@@ -37,27 +37,28 @@ This project follows a **Microservice Architecture** to ensure isolated dependen
 │   ├── generate_url/       # Pre-signed URL generator microservice
 │   ├── poller/             # SQS to Step Functions trigger microservice
 │   └── steps/              # Step Functions processing microservices
-│       ├── validate/       # Checks image format and validity
+│       ├── validate/       # Checks file size and image format
 │       ├── resize/         # Resizes image (uses Pillow layer)
 │       ├── watermark/      # Applies watermark and standardizes to .jpg
 │       ├── extract_metadata/ # Extracts image properties
 │       └── store/          # Saves final image to S3 and DynamoDB
 ├── statemachine/           # Step Functions Amazon States Language (ASL) definition
+├── tests/                  # Automated unit tests for Lambda handlers
 └── README.md
 ```
 
 ## 🚀 CI/CD Pipeline
 This repository uses **GitHub Actions** to ensure code quality. On every push to the `main` branch, the pipeline automatically:
 1. Installs all Python dependencies across the microservices and layers.
-2. Runs automated unit tests for the Lambda handlers (and explicitly fails the build if zero tests are discovered).
+2. Runs automated unit tests (and explicitly fails the build if zero tests are discovered).
 3. Validates the Infrastructure as Code (IaC) template syntax using the AWS SAM CLI (`sam validate --lint`).
 4. Runs `sam build` to verify the Lambda packages and Pillow layers compile successfully.
 *(Note: Actual AWS deployment is intentionally bypassed in this demo to avoid requiring AWS credentials and potential charges).*
 
 ## 🔒 Well-Architected Framework Alignment
 *   **Operational Excellence:** Infrastructure as Code (IaC), automated CI/CD validation, enforced unit testing, X-Ray tracing, and granular CloudWatch alarms.
-*   **Security:** Least Privilege IAM policies, S3 Block Public Access, AES-256 encryption, CloudFront OAC, and deep image verification.
-*   **Reliability:** SQS buffering with partial batch failure handling, idempotent Step Functions executions, exponential backoff retries, and Dead Letter Queues (DLQ).
+*   **Security:** Least Privilege IAM policies, API Keys with Usage Plans, S3 Block Public Access, AES-256 encryption, CloudFront OAC, and deep image verification.
+*   **Reliability:** SQS buffering with partial batch failure handling, idempotent Step Functions executions with failure retries, exponential backoff, Dead Letter Queues (DLQ), and SNS failure alerts.
 *   **Performance:** Pre-signed URLs offload ingestion directly to S3, and CloudFront caches processed images at the edge.
 *   **Cost Optimization:** Automated S3 Lifecycle transitions to Glacier after 30 days, and serverless pay-per-use pricing.
 *   **Sustainability:** Serverless compute (Lambda) scales to zero when idle, minimizing wasted energy, and CloudFront edge caching reduces the energy required to transmit data over long distances.
