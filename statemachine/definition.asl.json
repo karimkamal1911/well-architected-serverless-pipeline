@@ -16,7 +16,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "PublishFailureMessage"
+          "Next": "MarkFailed"
         }
       ],
       "Next": "Resize"
@@ -35,7 +35,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "PublishFailureMessage"
+          "Next": "MarkFailed"
         }
       ],
       "Next": "Watermark"
@@ -54,7 +54,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "PublishFailureMessage"
+          "Next": "MarkFailed"
         }
       ],
       "Next": "ExtractMetadata"
@@ -73,7 +73,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "PublishFailureMessage"
+          "Next": "MarkFailed"
         }
       ],
       "Next": "Store"
@@ -92,10 +92,30 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "PublishFailureMessage"
+          "Next": "MarkFailed"
         }
       ],
       "End": true
+    },
+    "MarkFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${LockTableName}",
+        "Key": {
+          "ProcessingId": {"S.$": "$.processing_id"}
+        },
+        "UpdateExpression": "SET #s = :s",
+        "ExpressionAttributeNames": {"#s": "Status"},
+        "ExpressionAttributeValues": {":s": {"S": "FAILED"}}
+      },
+      "Next": "PublishFailureMessage",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PublishFailureMessage"
+        }
+      ]
     },
     "PublishFailureMessage": {
       "Type": "Task",
