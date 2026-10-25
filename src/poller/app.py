@@ -14,9 +14,8 @@ STATE_MACHINE_ARN = os.environ['STATE_MACHINE_ARN']
 
 def lambda_handler(event, context):
     failures = []
-    state_machine_name = STATE_MACHINE_ARN.split(':')[-1]
-    region = os.environ.get('AWS_REGION')
-    account = STATE_MACHINE_ARN.split(':')[4]
+    parts = STATE_MACHINE_ARN.split(':')
+    region, account, state_machine_name = parts[3], parts[4], parts[6]
     
     for record in event['Records']:
         try:
@@ -27,11 +26,10 @@ def lambda_handler(event, context):
                 version_id = s3_rec['s3']['object'].get('versionId')
                 
                 if not version_id or version_id == 'null':
-                    raise ValueError("Missing or null versionId. S3 versioning is required.")
+                    raise ValueError("Missing or null versionId.")
                 
                 payload_str = json.dumps({"bucket": bucket, "key": key, "versionId": version_id}, sort_keys=True)
                 processing_id = hashlib.sha256(payload_str.encode()).hexdigest()
-                
                 attempt_id = uuid.uuid4().hex[:8]
                 exec_name = f"proc-{processing_id[:60]}-{attempt_id}"
                 
@@ -56,44 +54,46 @@ def lambda_handler(event, context):
                     if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
                         raise
                     
-                    item = lock_table.get_item(Key={'ProcessingId': processing_id}).get('Item')
+                    item = lock_table.get_item(Key={'ProcessingId': processing_id}, ConsistentRead=True).get('Item')
                     if not item:
                         raise Exception("Race condition on lock table get_item")
                     
                     status = item.get('Status')
                     item_lease = item.get('LeaseExpiry', 0)
+                    current_exec = item.get('ExecutionArn', exec_name)
                     
                     if status == 'SUCCEEDED':
-                        print(f"Processing {processing_id} already SUCCEEDED. Skipping.")
+                        continue
+                    elif status == 'FAILED':
                         continue
                     elif item_lease > now:
                         print(f"Processing {processing_id} is actively leased. Skipping.")
                         continue
                     
-                    current_arn = item.get('ExecutionArn', exec_name)
                     try:
-                        exec_details = sfn.describe_execution(executionArn=f"arn:aws:states:{region}:{account}:execution:{state_machine_name}:{current_arn}")
+                        exec_arn = f"arn:aws:states:{region}:{account}:execution:{state_machine_name}:{current_exec}"
+                        exec_details = sfn.describe_execution(executionArn=exec_arn)
                         exec_status = exec_details['status']
+                        
                         if exec_status == 'RUNNING':
-                            print(f"Execution {current_arn} is RUNNING. Extending lease.")
                             lock_table.update_item(
                                 Key={'ProcessingId': processing_id},
                                 UpdateExpression="SET LeaseExpiry = :l",
-                                ExpressionAttributeValues={':l': lease}
+                                ConditionExpression="ExecutionArn = :e",
+                                ExpressionAttributeValues={':l': lease, ':e': current_exec}
                             )
                             continue
                         elif exec_status == 'SUCCEEDED':
                             lock_table.update_item(
                                 Key={'ProcessingId': processing_id},
                                 UpdateExpression="SET #s = :s",
+                                ConditionExpression="ExecutionArn = :e",
                                 ExpressionAttributeNames={'#s': 'Status'},
-                                ExpressionAttributeValues={':s': 'SUCCEEDED'}
+                                ExpressionAttributeValues={':s': 'SUCCEEDED', ':e': current_exec}
                             )
                             continue
-                        elif exec_status in ['FAILED', 'TIMED_OUT', 'ABORTED']:
-                            print(f"Execution {current_arn} failed. Preparing retry.")
                     except sfn.exceptions.ExecutionDoesNotExist:
-                        print(f"Execution {current_arn} missing. Safe to claim.")
+                        pass 
                     
                     try:
                         lock_table.update_item(
@@ -111,29 +111,15 @@ def lambda_handler(event, context):
                         )
                     except ClientError as claim_err:
                         if claim_err.response['Error']['Code'] == 'ConditionalCheckFailedException':
-                            print("Concurrent retry claimed by another invocation. Skipping.")
                             continue
                         raise claim_err
                 
                 try:
-                    sfn.start_execution(
-                        stateMachineArn=STATE_MACHINE_ARN,
-                        name=exec_name,
-                        input=json.dumps(payload)
-                    )
-                    print(f"Started SFN execution {exec_name}")
+                    sfn.start_execution(stateMachineArn=STATE_MACHINE_ARN, name=exec_name, input=json.dumps(payload))
                 except sfn.exceptions.ExecutionAlreadyExists:
-                    print(f"Execution {exec_name} already exists. Checking status.")
+                    pass
                 except Exception as start_err:
-                    print(f"Failed to start execution {exec_name}: {start_err}")
-                    try:
-                        lock_table.delete_item(
-                            Key={'ProcessingId': processing_id},
-                            ConditionExpression="ExecutionArn = :e AND AttemptId = :a",
-                            ExpressionAttributeValues={':e': exec_name, ':a': attempt_id}
-                        )
-                    except Exception as del_err:
-                        print(f"Conditional deletion failed: {del_err}")
+                    print(f"Ambiguous start error for {exec_name}: {start_err}. Relying on SQS retry to reconcile.")
                     raise start_err
                         
         except Exception as e:
