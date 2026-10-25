@@ -28,12 +28,7 @@ def lambda_handler(event, context):
         base_key = os.path.splitext(os.path.basename(key))[0]
         watermarked_key = f"watermarked/{processing_id}/{base_key}.jpg"
         
-        s3.put_object(
-            Bucket=bucket, 
-            Key=watermarked_key, 
-            Body=buffer, 
-            ContentType='image/jpeg'
-        )
+        s3.put_object(Bucket=bucket, Key=watermarked_key, Body=buffer, ContentType='image/jpeg')
         
         return {
             "bucket": bucket,
@@ -41,7 +36,8 @@ def lambda_handler(event, context):
             "original_key": event['original_key'],
             "versionId": event['versionId'],
             "processing_id": processing_id,
-            "attempt_id": event['attempt_id']
+            "attempt_id": event['attempt_id'],
+            "upload_time": event['upload_time']
         }
     except Exception as e:
         print(f"Watermark failed: {str(e)}")
