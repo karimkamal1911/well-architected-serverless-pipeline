@@ -45,10 +45,21 @@ Resources:
             MaxAge: 3000
       LifecycleConfiguration:
         Rules:
+          - Id: ExpireUploads
+            Status: Enabled
+            Prefix: "uploads/"
+            ExpirationInDays: 30
+          - Id: ExpireIntermediate
+            Status: Enabled
+            Prefix: "resized/"
+            ExpirationInDays: 30
+          - Id: ExpireWatermarked
+            Status: Enabled
+            Prefix: "watermarked/"
+            ExpirationInDays: 30
           - Id: ExpireNoncurrentVersions
             Status: Enabled
-            NoncurrentVersionExpiration:
-              NoncurrentDays: 30
+            NoncurrentVersionExpirationInDays: 30
           - Id: AbortIncompleteMultipartUploads
             Status: Enabled
             AbortIncompleteMultipartUpload:
