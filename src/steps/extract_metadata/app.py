@@ -25,7 +25,9 @@ def lambda_handler(event, context):
             "bucket": bucket,
             "key": key,
             "original_key": event['original_key'],
+            "versionId": event['versionId'],
             "processing_id": event['processing_id'],
+            "attempt_id": event['attempt_id'],
             "metadata": metadata
         }
     except Exception as e:
