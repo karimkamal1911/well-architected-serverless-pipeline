@@ -4,6 +4,7 @@ import boto3
 import urllib.parse
 import hashlib
 import time
+import uuid
 from botocore.exceptions import ClientError
 
 sfn = boto3.client('stepfunctions')
@@ -20,7 +21,10 @@ def lambda_handler(event, context):
             for s3_rec in body.get('Records', []):
                 bucket = s3_rec['s3']['bucket']['name']
                 key = urllib.parse.unquote_plus(s3_rec['s3']['object']['key'])
-                version_id = s3_rec['s3']['object'].get('versionId', 'null')
+                version_id = s3_rec['s3']['object'].get('versionId')
+                
+                if not version_id or version_id == 'null':
+                    raise ValueError("Missing or null versionId. S3 versioning is required.")
                 
                 payload_str = json.dumps({"bucket": bucket, "key": key, "versionId": version_id}, sort_keys=True)
                 processing_id = hashlib.sha256(payload_str.encode()).hexdigest()
@@ -77,7 +81,7 @@ def lambda_handler(event, context):
                             print("Concurrent retry claimed by another invocation. Skipping.")
                             continue
                         raise claim_err
-                        
+                
                 try:
                     sfn.start_execution(
                         stateMachineArn=STATE_MACHINE_ARN,
@@ -86,7 +90,27 @@ def lambda_handler(event, context):
                     )
                     print(f"Started SFN execution {exec_name}")
                 except sfn.exceptions.ExecutionAlreadyExists:
-                    print(f"Execution {exec_name} already exists. Safe to proceed.")
+                    exec_arn = f"arn:aws:states:{os.environ.get('AWS_REGION')}:{os.environ.get('AWS_ACCOUNT_ID')}:execution:{STATE_MACHINE_ARN.split(':')[-1]}:{exec_name}"
+                    details = sfn.describe_execution(executionArn=exec_arn)
+                    
+                    if details['status'] == 'SUCCEEDED':
+                        lock_table.update_item(
+                            Key={'ProcessingId': processing_id},
+                            UpdateExpression="SET #s = :s",
+                            ExpressionAttributeNames={'#s': 'Status'},
+                            ExpressionAttributeValues={':s': 'SUCCEEDED'}
+                        )
+                        print(f"Execution {exec_name} already SUCCEEDED. Marked as SUCCEEDED.")
+                    elif details['status'] == 'FAILED':
+                        retry_name = f"{exec_name}-retry-{uuid.uuid4().hex[:8]}"
+                        sfn.start_execution(
+                            stateMachineArn=STATE_MACHINE_ARN, 
+                            name=retry_name, 
+                            input=json.dumps(payload)
+                        )
+                        print(f"Retried failed execution as {retry_name}")
+                    else:
+                        print(f"Execution {exec_name} is {details['status']}. Skipping.")
                 except Exception as start_err:
                     print(f"Failed to start execution {exec_name}: {start_err}")
                     try:
@@ -98,7 +122,7 @@ def lambda_handler(event, context):
                     except Exception as del_err:
                         print(f"Conditional deletion failed: {del_err}")
                     raise start_err
-                    
+                        
         except Exception as e:
             print(f"Error processing message {record['messageId']}: {str(e)}")
             failures.append({'itemIdentifier': record['messageId']})
