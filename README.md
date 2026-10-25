@@ -47,9 +47,9 @@ This project follows a **Microservice Architecture** to ensure isolated dependen
 ## 🚀 CI/CD Pipeline
 This repository uses **GitHub Actions** to ensure code quality. On every push to the `main` branch, the pipeline automatically:
 1. Installs all Python dependencies across the microservices.
-2. Validates the **AWS SAM** Infrastructure as Code template.
-3. Runs `sam build` to verify the Lambda packages compile successfully.
-*(Note: The deployment step is intentionally bypassed in this demo to avoid AWS charges).*
+2. Validates the Infrastructure as Code (IaC) template syntax using a Python YAML parser (configured to handle CloudFormation intrinsic functions like `!Sub` and `!Ref`).
+3. Simulates the deployment phase.
+*(Note: Actual AWS deployment and `sam build` are intentionally bypassed in this demo to avoid requiring AWS credentials and potential charges).*
 
 ## 🔒 Well-Architected Framework Alignment
 *   **Operational Excellence:** Infrastructure as Code (IaC), X-Ray tracing, and granular CloudWatch alarms.
