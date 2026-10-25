@@ -39,10 +39,20 @@ Resources:
       CorsConfiguration:
         CorsRules:
           - AllowedHeaders: ["*"]
-            AllowedMethods: ["PUT", "GET", "HEAD"]
+            AllowedMethods: ["PUT", "POST", "GET", "HEAD"]
             AllowedOrigins: [!Ref FrontendOrigin]
             ExposedHeaders: ["ETag", "x-amz-version-id"]
             MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireNoncurrentVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
       NotificationConfiguration:
         QueueConfigurations:
           - Event: 's3:ObjectCreated:*'
@@ -176,6 +186,9 @@ Resources:
               - Effect: Allow
                 Action: 'xray:PutTraceSegments'
                 Resource: '*'
+              - Effect: Allow
+                Action: 'dynamodb:UpdateItem'
+                Resource: !GetAtt PollerLockTable.Arn
 
   ImageProcessingStateMachine:
     Type: AWS::Serverless::StateMachine
@@ -192,6 +205,7 @@ Resources:
         ExtractMetadataFunctionArn: !GetAtt ExtractMetadataFunction.Arn
         StoreFunctionArn: !GetAtt StoreFunction.Arn
         SNSTopicArn: !Ref FailureSNSTopic
+        LockTableName: !Ref PollerLockTable
 
   GenerateUrlFunction:
     Type: AWS::Serverless::Function
@@ -203,6 +217,7 @@ Resources:
       Environment:
         Variables:
           BUCKET_NAME: !Ref IngestBucket
+          FRONTEND_ORIGIN: !Ref FrontendOrigin
       Policies:
         - S3WritePolicy:
             BucketName: !Ref IngestBucket
@@ -299,6 +314,7 @@ Resources:
         Variables:
           TABLE_NAME: !Ref ImageMetadataTable
           DEST_BUCKET: !Ref DestinationBucket
+          LOCK_TABLE_NAME: !Ref PollerLockTable
       Policies:
         - S3ReadPolicy:
             BucketName: !Ref IngestBucket
@@ -306,6 +322,8 @@ Resources:
             BucketName: !Ref DestinationBucket
         - DynamoDBCrudPolicy:
             TableName: !Ref ImageMetadataTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PollerLockTable
 
   ImageProcessingLayer:
     Type: AWS::Serverless::LayerVersion
