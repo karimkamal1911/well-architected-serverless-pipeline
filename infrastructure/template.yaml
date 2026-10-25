@@ -209,11 +209,14 @@ Resources:
         Variables:
           STATE_MACHINE_ARN: !Ref ImageProcessingStateMachine
           AWS_ACCOUNT_ID: !Ref AWS::AccountId
+          TABLE_NAME: !Ref ImageMetadataTable
       Policies:
         - SQSPollerPolicy:
             QueueName: !GetAtt ImageProcessingQueue.QueueName
         - StepFunctionsExecutionPolicy:
             StateMachineName: !GetAtt ImageProcessingStateMachine.Name
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ImageMetadataTable
         - Statement:
             - Effect: Allow
               Action: 'states:DescribeExecution'
@@ -392,6 +395,25 @@ Resources:
       Dimensions:
         - Name: StateMachineArn
           Value: !Ref ImageProcessingStateMachine
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref FailureSNSTopic
+
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Alarm if any Lambda function throws an error"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref PollerFunction
+        - Name: FunctionName
+          Value: !Ref ValidateFunction
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
