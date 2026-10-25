@@ -28,7 +28,9 @@ def lambda_handler(event, context):
         watermarked.save(buffer, format='JPEG')
         buffer.seek(0)
         
-        watermarked_key = f"watermarked/{key}"
+        base_key = event['original_key'].rsplit('.', 1)[0]
+        watermarked_key = f"watermarked/{base_key}.jpg"
+        
         s3.put_object(
             Bucket=bucket, 
             Key=watermarked_key, 
