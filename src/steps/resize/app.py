@@ -40,7 +40,9 @@ def lambda_handler(event, context):
             "bucket": bucket,
             "key": resized_key,
             "original_key": event['original_key'],
-            "processing_id": processing_id
+            "versionId": version_id,
+            "processing_id": processing_id,
+            "attempt_id": event['attempt_id']
         }
     except Exception as e:
         print(f"Resize failed: {str(e)}")
