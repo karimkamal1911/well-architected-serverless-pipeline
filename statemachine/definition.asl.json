@@ -100,7 +100,20 @@
           "Next": "MarkFailed"
         }
       ],
-      "End": true
+      "ResultPath": "$.storeResult",
+      "Next": "PublishSuccessMessage"
+    },
+    "PublishSuccessMessage": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${NotificationTopicArn}",
+        "Message.$": "States.JsonToString($)"
+      },
+      "Next": "Succeed"
+    },
+    "Succeed": {
+      "Type": "Succeed"
     },
     "MarkFailed": {
       "Type": "Task",
@@ -132,15 +145,15 @@
       "Type": "Task",
       "Resource": "arn:aws:states:::sns:publish",
       "Parameters": {
-        "TopicArn": "${SNSTopicArn}",
-        "Message.$": "$"
+        "TopicArn": "${NotificationTopicArn}",
+        "Message.$": "States.JsonToString($)"
       },
       "Next": "ProcessingFailed"
     },
     "ProcessingFailed": {
       "Type": "Fail",
       "Error": "ProcessingFailed",
-      "Cause": "The image processing workflow failed. Check SNS notification and CloudWatch logs."
+      "Cause": "The image processing workflow failed."
     }
   }
 }
