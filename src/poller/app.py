@@ -14,12 +14,13 @@ table = dynamodb.Table(TABLE_NAME)
 def lambda_handler(event, context):
     batch_item_failures = []
     state_machine_name = STATE_MACHINE_ARN.split(':')[-1]
+    region = os.environ.get('AWS_REGION')
+    account = os.environ.get('AWS_ACCOUNT_ID')
 
     for record in event['Records']:
         message_id = record['messageId']
         try:
             body = json.loads(record['body'])
-            
             for s3_record in body.get('Records', []):
                 bucket = s3_record['s3']['bucket']['name']
                 key = urllib.parse.unquote_plus(s3_record['s3']['object']['key'])
@@ -33,30 +34,50 @@ def lambda_handler(event, context):
                 
                 unique_string = f"{bucket}-{key}-{eTag}"
                 execution_name = hashlib.md5(unique_string.encode()).hexdigest()
+                base_execution_arn = f"arn:aws:states:{region}:{account}:execution:{state_machine_name}:{execution_name}"
                 
                 try:
                     table.put_item(
-                        Item={'ImageId': execution_name, 'Status': 'PROCESSING'},
+                        Item={
+                            'ImageId': execution_name, 
+                            'Status': 'PROCESSING',
+                            'ExecutionArn': base_execution_arn
+                        },
                         ConditionExpression='attribute_not_exists(ImageId)'
                     )
+                    sfn_client.start_execution(
+                        stateMachineArn=STATE_MACHINE_ARN,
+                        name=execution_name, 
+                        input=json.dumps(normalized_payload)
+                    )
+                    print(f"Started SFN execution {execution_name}")
+                    
                 except ClientError as ce:
                     if ce.response['Error']['Code'] == 'ConditionalCheckFailedException':
-                        execution_arn = f"arn:aws:states:{os.environ.get('AWS_REGION')}:{os.environ.get('AWS_ACCOUNT_ID')}:execution:{state_machine_name}:{execution_name}"
+                        item = table.get_item(Key={'ImageId': execution_name}).get('Item')
+                        if not item:
+                            continue
+                        
+                        current_arn = item.get('ExecutionArn', base_execution_arn)
                         
                         try:
-                            exec_details = sfn_client.describe_execution(executionArn=execution_arn)
-                            status = exec_details['status']
+                            exec_details = sfn_client.describe_execution(executionArn=current_arn)
+                            exec_status = exec_details['status']
                             
-                            if status in ['FAILED', 'TIMED_OUT', 'ABORTED']:
+                            if exec_status in ['FAILED', 'TIMED_OUT', 'ABORTED']:
+                                retry_name = f"{execution_name}-retry-{hashlib.md5(os.urandom(16)).hexdigest()[:8]}"
+                                retry_arn = f"arn:aws:states:{region}:{account}:execution:{state_machine_name}:{retry_name}"
+                                
                                 try:
                                     table.update_item(
                                         Key={'ImageId': execution_name},
-                                        UpdateExpression="SET #s = :new_status",
-                                        ConditionExpression="#s = :processing",
+                                        UpdateExpression="SET #s = :retry_status, ExecutionArn = :new_arn",
+                                        ConditionExpression="ExecutionArn = :current_arn",
                                         ExpressionAttributeNames={'#s': 'Status'},
                                         ExpressionAttributeValues={
-                                            ':new_status': 'RETRYING',
-                                            ':processing': 'PROCESSING'
+                                            ':retry_status': 'RETRYING',
+                                            ':new_arn': retry_arn,
+                                            ':current_arn': current_arn
                                         }
                                     )
                                 except ClientError as lock_err:
@@ -65,7 +86,6 @@ def lambda_handler(event, context):
                                         continue
                                     raise lock_err
                                     
-                                retry_name = f"{execution_name}-retry-{hashlib.md5(os.urandom(16)).hexdigest()[:8]}"
                                 try:
                                     sfn_client.start_execution(
                                         stateMachineArn=STATE_MACHINE_ARN,
@@ -76,32 +96,19 @@ def lambda_handler(event, context):
                                 except Exception as start_err:
                                     table.update_item(
                                         Key={'ImageId': execution_name},
-                                        UpdateExpression="SET #s = :p",
+                                        UpdateExpression="SET #s = :failed_status",
                                         ExpressionAttributeNames={'#s': 'Status'},
-                                        ExpressionAttributeValues={':p': 'PROCESSING'}
+                                        ExpressionAttributeValues={':failed_status': 'FAILED'}
                                     )
                                     raise start_err
                             else:
-                                print(f"Execution {execution_name} is {status}. Skipping.")
-                            continue
+                                print(f"Execution {current_arn} is {exec_status}. Skipping.")
                         except sfn_client.exceptions.ExecutionDoesNotExist:
                             print(f"Execution missing for lock {execution_name}. Cleaning up.")
                             table.delete_item(Key={'ImageId': execution_name})
                             raise Exception("Stale lock deleted")
                     else:
                         raise ce
-                
-                try:
-                    sfn_client.start_execution(
-                        stateMachineArn=STATE_MACHINE_ARN,
-                        name=execution_name, 
-                        input=json.dumps(normalized_payload)
-                    )
-                    print(f"Started SFN execution {execution_name}")
-                except Exception as start_err:
-                    print(f"Failed to start execution {execution_name}: {start_err}")
-                    table.delete_item(Key={'ImageId': execution_name})
-                    raise start_err
                         
         except Exception as e:
             print(f"Error processing message {message_id}: {str(e)}")
