@@ -8,7 +8,9 @@ dynamodb = boto3.resource('dynamodb')
 
 DEST_BUCKET = os.environ.get('DEST_BUCKET')
 TABLE_NAME = os.environ.get('TABLE_NAME')
+LOCK_TABLE_NAME = os.environ.get('LOCK_TABLE_NAME')
 table = dynamodb.Table(TABLE_NAME)
+lock_table = dynamodb.Table(LOCK_TABLE_NAME)
 
 def lambda_handler(event, context):
     source_bucket = event['bucket']
@@ -41,6 +43,13 @@ def lambda_handler(event, context):
                 'Format': metadata.get('format'),
                 'DestinationKey': final_key
             }
+        )
+        
+        lock_table.update_item(
+            Key={'ProcessingId': processing_id},
+            UpdateExpression="SET #s = :s",
+            ExpressionAttributeNames={'#s': 'Status'},
+            ExpressionAttributeValues={':s': 'SUCCEEDED'}
         )
         
         return {
