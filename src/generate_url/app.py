@@ -5,7 +5,10 @@ import uuid
 
 s3_client = boto3.client('s3')
 BUCKET_NAME = os.environ.get('BUCKET_NAME')
-ORIGIN = os.environ.get('FRONTEND_ORIGIN', '*')
+ORIGIN = os.environ.get('FRONTEND_ORIGIN')
+
+if not ORIGIN:
+    raise ValueError("FRONTEND_ORIGIN environment variable must be set")
 
 ALLOWED_TYPES = {
     ".jpg": "image/jpeg",
