@@ -14,13 +14,12 @@ def lambda_handler(event, context):
     source_bucket = event['bucket']
     source_key = event['key']
     original_key = event['original_key']
+    processing_id = event['processing_id']
     metadata = event['metadata']
     
-    print(f"Storing final image and metadata for {original_key}")
-    
     try:
-        base_key = original_key.rsplit('.', 1)[0]
-        final_key = f"processed/{base_key}.jpg"
+        base_key = os.path.splitext(os.path.basename(original_key))[0]
+        final_key = f"processed/{processing_id}/{base_key}.jpg"
         copy_source = {'Bucket': source_bucket, 'Key': source_key}
         
         s3.copy_object(
@@ -33,7 +32,8 @@ def lambda_handler(event, context):
         
         table.put_item(
             Item={
-                'ImageId': original_key,
+                'ProcessingId': processing_id,
+                'OriginalKey': original_key,
                 'Timestamp': datetime.utcnow().isoformat(),
                 'Status': 'COMPLETED',
                 'Width': metadata.get('width'),
@@ -42,8 +42,6 @@ def lambda_handler(event, context):
                 'DestinationKey': final_key
             }
         )
-        
-        print(f"Successfully stored image at {final_key} and metadata in DynamoDB.")
         
         return {
             "statusCode": 200,
