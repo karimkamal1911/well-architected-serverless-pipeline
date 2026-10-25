@@ -2,6 +2,11 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Serverless Image Processing Pipeline
 
+Parameters:
+  AlertEmail:
+    Type: String
+    Description: Email address to receive failure alerts
+
 Globals:
   Function:
     Timeout: 30
@@ -13,6 +18,7 @@ Globals:
 Resources:
   IngestBucket:
     Type: AWS::S3::Bucket
+    DependsOn: ImageProcessingQueuePolicy
     Properties:
       BucketName: !Sub "${AWS::StackName}-ingest-${AWS::AccountId}"
       PublicAccessBlockConfiguration:
@@ -75,6 +81,13 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: ImagePipelineFailures
+
+  FailureSNSSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref FailureSNSTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
 
   ImageProcessingQueue:
     Type: AWS::SQS::Queue
@@ -204,7 +217,7 @@ Resources:
         - Statement:
             - Effect: Allow
               Action: 'states:DescribeExecution'
-              Resource: '*'
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${ImageProcessingStateMachine.Name}:*"
       Events:
         SQSEvent:
           Type: SQS
@@ -367,6 +380,8 @@ Resources:
       EvaluationPeriods: 1
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref FailureSNSTopic
 
   StateMachineFailedAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -382,3 +397,5 @@ Resources:
       EvaluationPeriods: 1
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref FailureSNSTopic
