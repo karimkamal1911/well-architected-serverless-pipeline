@@ -30,9 +30,10 @@ jobs:
       - name: Run Unit Tests
         run: |
           echo "Running unit tests..."
-          python -m unittest discover -s tests -t . -v | tee test_output.txt
+          set -o pipefail
+          python -m unittest discover -s tests -t . -v 2>&1 | tee test_output.txt
           if grep -q "Ran 0 tests" test_output.txt; then
-            echo "ERROR: Zero tests were discovered! Failing the pipeline."
+            echo "ERROR: Zero tests were discovered!"
             exit 1
           fi
 
