@@ -6,6 +6,10 @@ Parameters:
   AlertEmail:
     Type: String
     Description: Email address to receive failure alerts
+  FrontendOrigin:
+    Type: String
+    Default: "http://localhost:3000"
+    Description: Allowed CORS origin for the frontend client
 
 Globals:
   Function:
@@ -21,6 +25,8 @@ Resources:
     DependsOn: ImageProcessingQueuePolicy
     Properties:
       BucketName: !Sub "${AWS::StackName}-ingest-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -30,6 +36,13 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: ["PUT", "GET", "HEAD"]
+            AllowedOrigins: [!Ref FrontendOrigin]
+            ExposeHeaders: ["ETag", "x-amz-version-id"]
+            MaxAge: 3000
       NotificationConfiguration:
         QueueConfigurations:
           - Event: 's3:ObjectCreated:*'
@@ -53,13 +66,6 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-      LifecycleConfiguration:
-        Rules:
-          - Id: TransitionToGlacier
-            Status: Enabled
-            Transitions:
-              - TransitionInDays: 30
-                StorageClass: GLACIER
 
   DestinationBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -119,15 +125,26 @@ Resources:
               StringEquals:
                 aws:SourceAccount: !Ref AWS::AccountId
 
+  PollerLockTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: ProcessingId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ProcessingId
+          KeyType: HASH
+
   ImageMetadataTable:
     Type: AWS::DynamoDB::Table
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: ImageId
+        - AttributeName: ProcessingId
           AttributeType: S
       KeySchema:
-        - AttributeName: ImageId
+        - AttributeName: ProcessingId
           KeyType: HASH
 
   StepFunctionsExecutionRole:
@@ -208,19 +225,14 @@ Resources:
       Environment:
         Variables:
           STATE_MACHINE_ARN: !Ref ImageProcessingStateMachine
-          AWS_ACCOUNT_ID: !Ref AWS::AccountId
-          TABLE_NAME: !Ref ImageMetadataTable
+          LOCK_TABLE_NAME: !Ref PollerLockTable
       Policies:
         - SQSPollerPolicy:
             QueueName: !GetAtt ImageProcessingQueue.QueueName
         - StepFunctionsExecutionPolicy:
             StateMachineName: !GetAtt ImageProcessingStateMachine.Name
         - DynamoDBCrudPolicy:
-            TableName: !Ref ImageMetadataTable
-        - Statement:
-            - Effect: Allow
-              Action: 'states:DescribeExecution'
-              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${ImageProcessingStateMachine.Name}:*"
+            TableName: !Ref PollerLockTable
       Events:
         SQSEvent:
           Type: SQS
@@ -311,6 +323,10 @@ Resources:
     Properties:
       StageName: Prod
       TracingEnabled: true
+      Cors:
+        AllowOrigin: !Sub "'${FrontendOrigin}'"
+        AllowHeaders: "'Content-Type,X-Api-Key'"
+        AllowMethods: "'OPTIONS,POST'"
 
   ImageApiUsagePlan:
     Type: AWS::ApiGateway::UsagePlan
@@ -412,74 +428,6 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Ref PollerFunction
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      AlarmActions:
-        - !Ref FailureSNSTopic
-
-  ValidateErrorsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmDescription: "Alarm if Validate Lambda throws an error"
-      Namespace: AWS/Lambda
-      MetricName: Errors
-      Dimensions:
-        - Name: FunctionName
-          Value: !Ref ValidateFunction
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      AlarmActions:
-        - !Ref FailureSNSTopic
-
-  ResizeErrorsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmDescription: "Alarm if Resize Lambda throws an error"
-      Namespace: AWS/Lambda
-      MetricName: Errors
-      Dimensions:
-        - Name: FunctionName
-          Value: !Ref ResizeFunction
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      AlarmActions:
-        - !Ref FailureSNSTopic
-
-  WatermarkErrorsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmDescription: "Alarm if Watermark Lambda throws an error"
-      Namespace: AWS/Lambda
-      MetricName: Errors
-      Dimensions:
-        - Name: FunctionName
-          Value: !Ref WatermarkFunction
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      AlarmActions:
-        - !Ref FailureSNSTopic
-
-  StoreErrorsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmDescription: "Alarm if Store Lambda throws an error"
-      Namespace: AWS/Lambda
-      MetricName: Errors
-      Dimensions:
-        - Name: FunctionName
-          Value: !Ref StoreFunction
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
