@@ -39,7 +39,9 @@ def lambda_handler(event, context):
             "bucket": bucket,
             "key": watermarked_key,
             "original_key": event['original_key'],
-            "processing_id": processing_id
+            "versionId": event['versionId'],
+            "processing_id": processing_id,
+            "attempt_id": event['attempt_id']
         }
     except Exception as e:
         print(f"Watermark failed: {str(e)}")
