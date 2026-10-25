@@ -6,7 +6,6 @@ from datetime import datetime
 s3 = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 
-# These environment variables are passed in from the SAM template
 DEST_BUCKET = os.environ.get('DEST_BUCKET')
 TABLE_NAME = os.environ.get('TABLE_NAME')
 table = dynamodb.Table(TABLE_NAME)
@@ -20,7 +19,6 @@ def lambda_handler(event, context):
     print(f"Storing final image and metadata for {original_key}")
     
     try:
-        # 1. Copy the processed image from the temp bucket to the final Destination Bucket
         final_key = f"processed/{original_key}"
         copy_source = {'Bucket': source_bucket, 'Key': source_key}
         
@@ -30,7 +28,6 @@ def lambda_handler(event, context):
             Key=final_key
         )
         
-        # 2. Write the metadata to DynamoDB
         table.put_item(
             Item={
                 'ImageId': original_key,
