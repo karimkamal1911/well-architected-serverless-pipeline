@@ -5,6 +5,11 @@ import io
 from PIL import Image
 from botocore.exceptions import ClientError
 
+# --- FIX: Set dummy AWS env vars BEFORE importing app modules ---
+os.environ['AWS_DEFAULT_REGION'] = 'us-east-1'
+os.environ['AWS_ACCESS_KEY_ID'] = 'testing'
+os.environ['AWS_SECRET_ACCESS_KEY'] = 'testing'
+os.environ['AWS_EC2_METADATA_DISABLED'] = 'true'
 os.environ['BUCKET_NAME'] = 'test-bucket'
 os.environ['DEST_BUCKET'] = 'dest-bucket'
 os.environ['TABLE_NAME'] = 'test-table'
@@ -79,6 +84,8 @@ class TestPipeline(unittest.TestCase):
         }
         response = store_handler(event, {})
         self.assertIn('processed/test.jpg', response['final_key'])
+        mock_s3.copy_object.assert_called_once()
+        mock_table.put_item.assert_called_once()
 
     @patch('src.steps.store.app.s3')
     @patch('src.steps.store.app.table')
@@ -118,6 +125,22 @@ class TestPipeline(unittest.TestCase):
         response = poller_handler(event, {})
         self.assertEqual(len(response['batchItemFailures']), 0)
         mock_sfn.start_execution.assert_not_called()
+
+    @patch('src.poller.app.sfn_client')
+    @patch('src.poller.app.table')
+    def test_poller_failed_execution_retries(self, mock_table, mock_sfn):
+        mock_table.put_item.side_effect = ClientError({'Error': {'Code': 'ConditionalCheckFailedException'}}, 'PutItem')
+        mock_sfn.describe_execution.return_value = {'status': 'FAILED'}
+        event = {
+            'Records': [{
+                'messageId': '123',
+                'body': '{"Records":[{"s3":{"bucket":{"name":"test"},"object":{"key":"test.jpg","eTag":"123"}}}]}'
+            }]
+        }
+        response = poller_handler(event, {})
+        self.assertEqual(len(response['batchItemFailures']), 0)
+        mock_table.update_item.assert_called_once()
+        mock_sfn.start_execution.assert_called_once()
 
     @patch('src.poller.app.sfn_client')
     @patch('src.poller.app.table')
