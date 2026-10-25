@@ -5,7 +5,6 @@ import io
 from PIL import Image
 from botocore.exceptions import ClientError
 
-# --- FIX: Set dummy AWS env vars BEFORE importing app modules ---
 os.environ['AWS_DEFAULT_REGION'] = 'us-east-1'
 os.environ['AWS_ACCESS_KEY_ID'] = 'testing'
 os.environ['AWS_SECRET_ACCESS_KEY'] = 'testing'
@@ -21,6 +20,7 @@ from src.steps.watermark.app import lambda_handler as watermark_handler
 from src.steps.extract_metadata.app import lambda_handler as metadata_handler
 from src.steps.store.app import lambda_handler as store_handler
 from src.poller.app import lambda_handler as poller_handler
+from src.poller.app import sfn_client as poller_sfn_client
 
 class TestPipeline(unittest.TestCase):
 
@@ -40,17 +40,31 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(response['bucket'], 'test')
 
     @patch('src.steps.validate.app.s3')
-    def test_validate_too_large(self, mock_s3):
-        mock_s3.head_object.return_value = {'ContentLength': 15 * 1024 * 1024}
+    def test_validate_empty_file(self, mock_s3):
+        mock_s3.head_object.return_value = {'ContentLength': 0}
         event = {'bucket': 'test', 'key': 'test.jpg'}
         with self.assertRaises(ValueError):
             validate_handler(event, {})
 
     @patch('src.steps.validate.app.s3')
-    def test_validate_corrupt_image(self, mock_s3):
+    def test_validate_unsupported_format(self, mock_s3):
         mock_s3.head_object.return_value = {'ContentLength': 1024}
-        mock_s3.get_object.return_value = {'Body': MagicMock(read=lambda: b'not an image')}
-        event = {'bucket': 'test', 'key': 'test.jpg'}
+        img = Image.new('RGB', (10, 10))
+        buf = io.BytesIO()
+        img.save(buf, format='GIF')
+        mock_s3.get_object.return_value = {'Body': MagicMock(read=lambda: buf.getvalue())}
+        event = {'bucket': 'test', 'key': 'test.gif'}
+        with self.assertRaises(ValueError):
+            validate_handler(event, {})
+
+    @patch('src.steps.validate.app.s3')
+    def test_validate_pixel_limit(self, mock_s3):
+        mock_s3.head_object.return_value = {'ContentLength': 1024}
+        img = Image.new('RGB', (10000, 10000))
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        mock_s3.get_object.return_value = {'Body': MagicMock(read=lambda: buf.getvalue())}
+        event = {'bucket': 'test', 'key': 'test.png'}
         with self.assertRaises(ValueError):
             validate_handler(event, {})
 
@@ -115,6 +129,7 @@ class TestPipeline(unittest.TestCase):
     @patch('src.poller.app.table')
     def test_poller_lock_exists_success(self, mock_table, mock_sfn):
         mock_table.put_item.side_effect = ClientError({'Error': {'Code': 'ConditionalCheckFailedException'}}, 'PutItem')
+        mock_table.get_item.return_value = {'Item': {'ImageId': 'test', 'ExecutionArn': 'arn:aws:states:us-east-1:123456789012:execution:Test:exec123', 'Status': 'PROCESSING'}}
         mock_sfn.describe_execution.return_value = {'status': 'SUCCEEDED'}
         event = {
             'Records': [{
@@ -130,6 +145,7 @@ class TestPipeline(unittest.TestCase):
     @patch('src.poller.app.table')
     def test_poller_failed_execution_retries(self, mock_table, mock_sfn):
         mock_table.put_item.side_effect = ClientError({'Error': {'Code': 'ConditionalCheckFailedException'}}, 'PutItem')
+        mock_table.get_item.return_value = {'Item': {'ImageId': 'test', 'ExecutionArn': 'arn:aws:states:us-east-1:123456789012:execution:Test:exec123', 'Status': 'PROCESSING'}}
         mock_sfn.describe_execution.return_value = {'status': 'FAILED'}
         event = {
             'Records': [{
@@ -141,6 +157,22 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(len(response['batchItemFailures']), 0)
         mock_table.update_item.assert_called_once()
         mock_sfn.start_execution.assert_called_once()
+
+    @patch('src.poller.app.sfn_client')
+    @patch('src.poller.app.table')
+    def test_poller_stale_lock(self, mock_table, mock_sfn):
+        mock_table.put_item.side_effect = ClientError({'Error': {'Code': 'ConditionalCheckFailedException'}}, 'PutItem')
+        mock_table.get_item.return_value = {'Item': {'ImageId': 'test', 'ExecutionArn': 'arn:aws:states:us-east-1:123456789012:execution:Test:exec123', 'Status': 'PROCESSING'}}
+        mock_sfn.describe_execution.side_effect = poller_sfn_client.exceptions.ExecutionDoesNotExist({'Error': {'Code': 'ExecutionDoesNotExist'}}, 'DescribeExecution')
+        event = {
+            'Records': [{
+                'messageId': '123',
+                'body': '{"Records":[{"s3":{"bucket":{"name":"test"},"object":{"key":"test.jpg","eTag":"123"}}}]}'
+            }]
+        }
+        response = poller_handler(event, {})
+        self.assertEqual(len(response['batchItemFailures']), 1)
+        mock_table.delete_item.assert_called_once()
 
     @patch('src.poller.app.sfn_client')
     @patch('src.poller.app.table')
