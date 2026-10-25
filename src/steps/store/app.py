@@ -1,7 +1,7 @@
 import json
 import boto3
 import os
-from datetime import datetime
+import datetime
 
 s3 = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
@@ -37,7 +37,7 @@ def lambda_handler(event, context):
             Item={
                 'ProcessingId': processing_id,
                 'OriginalKey': original_key,
-                'Timestamp': datetime.utcnow().isoformat(),
+                'Timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 'Status': 'COMPLETED',
                 'Width': metadata.get('width'),
                 'Height': metadata.get('height'),
