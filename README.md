@@ -24,7 +24,7 @@ The system securely accepts image uploads using pre-signed URLs (protected by AP
    * The `Validate` step uses `ContentLength` checks and deep image inspection (`Image.verify()`) to prevent oversized files, decompression bombs, and invalid formats. 
    * The state machine is configured to retry only transient AWS service failures (e.g., timeouts, service exceptions) and fails immediately on permanent validation errors.
 5. **Storage & Delivery:** Processed images are saved to the **S3 Destination Bucket** (standardized to `.jpg`), while metadata is written to **Amazon DynamoDB**. Users retrieve images globally via **Amazon CloudFront** (secured with Origin Access Control).
-6. **Observability & Alerting:** The system uses **AWS X-Ray** for distributed tracing across the entire pipeline. **Amazon CloudWatch** monitors for DLQ depth, failed Step Functions executions, and Lambda execution errors, while **Amazon SNS** sends immediate email alerts if a workflow fails, a message reaches the DLQ, or a Lambda crashes.
+6. **Observability & Alerting:** The system uses **AWS X-Ray** for distributed tracing across the entire pipeline. **Amazon CloudWatch** monitors for DLQ depth, failed Step Functions executions, and individual Lambda execution errors for the Poller, Validate, Resize, Watermark, and Store functions. **Amazon SNS** sends immediate email alerts if a workflow fails, a message reaches the DLQ, or a Lambda crashes.
 
 ## 📂 Repository Structure
 This project follows a **Microservice Architecture** to ensure isolated dependencies and least-privilege IAM roles.
@@ -57,7 +57,7 @@ This repository uses **GitHub Actions** to ensure code quality. On every push to
 *(Note: Actual AWS deployment is intentionally bypassed in this demo to avoid requiring AWS credentials and potential charges).*
 
 ## 🔒 Well-Architected Framework Alignment
-*   **Operational Excellence:** Infrastructure as Code (IaC), automated CI/CD validation, comprehensive unit testing, X-Ray tracing, and granular CloudWatch alarms (including Lambda errors).
+*   **Operational Excellence:** Infrastructure as Code (IaC), automated CI/CD validation, comprehensive unit testing, X-Ray tracing, and granular CloudWatch alarms.
 *   **Security:** Least Privilege IAM policies, API Keys with Usage Plans (for throttling/usage), S3 Block Public Access, AES-256 encryption, CloudFront OAC, and deep image verification.
 *   **Reliability:** SQS buffering with partial batch failure handling, atomic DynamoDB idempotency locks, Step Functions exponential backoff for transient failures, Dead Letter Queues (DLQ), and SNS failure alerts.
 *   **Performance:** Pre-signed URLs offload ingestion directly to S3, and CloudFront caches processed images at the edge.
