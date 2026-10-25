@@ -110,7 +110,7 @@
         "Key": {
           "ProcessingId": {"S.$": "$.processing_id"}
         },
-        "UpdateExpression": "SET #s = :s, AttemptId = :a",
+        "UpdateExpression": "SET #s = :s",
         "ConditionExpression": "AttemptId = :a",
         "ExpressionAttributeNames": {"#s": "Status"},
         "ExpressionAttributeValues": {
@@ -118,10 +118,12 @@
           ":a": {"S.$": "$.attempt_id"}
         }
       },
+      "ResultPath": null,
       "Next": "PublishFailureMessage",
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.markFailedError",
           "Next": "PublishFailureMessage"
         }
       ]
