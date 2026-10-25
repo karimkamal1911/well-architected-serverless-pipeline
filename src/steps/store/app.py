@@ -19,13 +19,16 @@ def lambda_handler(event, context):
     print(f"Storing final image and metadata for {original_key}")
     
     try:
-        final_key = f"processed/{original_key}"
+        base_key = original_key.rsplit('.', 1)[0]
+        final_key = f"processed/{base_key}.jpg"
         copy_source = {'Bucket': source_bucket, 'Key': source_key}
         
         s3.copy_object(
             CopySource=copy_source,
             Bucket=DEST_BUCKET,
-            Key=final_key
+            Key=final_key,
+            ContentType='image/jpeg',
+            MetadataDirective='REPLACE'
         )
         
         table.put_item(
