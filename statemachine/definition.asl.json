@@ -16,6 +16,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
           "Next": "MarkFailed"
         }
       ],
@@ -35,6 +36,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
           "Next": "MarkFailed"
         }
       ],
@@ -54,6 +56,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
           "Next": "MarkFailed"
         }
       ],
@@ -73,6 +76,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
           "Next": "MarkFailed"
         }
       ],
@@ -92,6 +96,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
           "Next": "MarkFailed"
         }
       ],
@@ -105,9 +110,13 @@
         "Key": {
           "ProcessingId": {"S.$": "$.processing_id"}
         },
-        "UpdateExpression": "SET #s = :s",
+        "UpdateExpression": "SET #s = :s, AttemptId = :a",
+        "ConditionExpression": "AttemptId = :a",
         "ExpressionAttributeNames": {"#s": "Status"},
-        "ExpressionAttributeValues": {":s": {"S": "FAILED"}}
+        "ExpressionAttributeValues": {
+          ":s": {"S": "FAILED"},
+          ":a": {"S.$": "$.attempt_id"}
+        }
       },
       "Next": "PublishFailureMessage",
       "Catch": [
